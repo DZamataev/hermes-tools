@@ -41,6 +41,9 @@ async def test_client_creates_chat_as_api_key_owner():
     assert payload["folder_id"] == "folder-hermes"
     assert payload["chat"]["models"] == ["hermes-live"]
     assert payload["variables"]["hermes_lineage_key"] == SESSION.lineage_key
+    assert payload["variables"]["hermes_bridge_message_ids"] == list(
+        PROJECTION.ordered_message_ids
+    )
 
 
 async def test_ensure_folder_reuses_exact_root_and_ignores_nested_duplicate():

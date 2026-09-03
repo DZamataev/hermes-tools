@@ -131,6 +131,42 @@ async def test_existing_title_and_bridge_message_are_repaired_but_unknown_node_s
     assert result.drift_message_ids == ("local",)
 
 
+async def test_reconcile_removes_only_recorded_stale_bridge_nodes():
+    mappings, client = FakeMappings("chat-1"), FakeClient()
+    client.chats["chat-1"] = {
+        "id": "chat-1",
+        "folder_id": "folder-hermes",
+        "variables": {
+            "hermes_lineage_key": SESSION.lineage_key,
+            "hermes_bridge_message_ids": ["old-bridge"],
+        },
+        "chat": {
+            "history": {
+                "currentId": "old-bridge",
+                "messages": {
+                    "old-bridge": {
+                        "id": "old-bridge",
+                        "role": "assistant",
+                        "content": "stale",
+                    },
+                    "local": {"id": "local", "role": "user", "content": "keep"},
+                },
+            }
+        },
+    }
+
+    result = await MirrorService(client, mappings).reconcile(SESSION, MESSAGES)
+
+    payload = client.updated[-1]
+    message_ids = payload["chat"]["history"]["messages"]
+    assert "old-bridge" not in message_ids
+    assert message_ids["local"]["content"] == "keep"
+    assert result.drift_message_ids == ("local",)
+    assert set(payload["variables"]["hermes_bridge_message_ids"]) == (
+        set(message_ids) - {"local"}
+    )
+
+
 async def test_snapshot_watermark_changes_only_after_durable_update():
     mappings, client = FakeMappings("chat-1"), FakeClient()
     client.chats["chat-1"] = {"id": "chat-1", "folder_id": "folder-hermes", "variables": {}, "chat": {}}

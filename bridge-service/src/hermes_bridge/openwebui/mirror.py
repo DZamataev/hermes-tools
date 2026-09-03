@@ -101,10 +101,27 @@ def _reconciled_payload(
     if not isinstance(current_messages, dict):
         current_messages = {}
 
-    drift_ids = tuple(
-        sorted(message_id for message_id in current_messages if message_id not in projection.history)
-    )
-    merged_messages = dict(current_messages)
+    variables = dict(existing.get("variables") or {})
+    recorded_bridge_ids = variables.get("hermes_bridge_message_ids", [])
+    if not isinstance(recorded_bridge_ids, list):
+        recorded_bridge_ids = []
+    previous_bridge_ids = {
+        message_id
+        for message_id in recorded_bridge_ids
+        if isinstance(message_id, str)
+    }
+    local_message_ids = {
+        message_id
+        for message_id in current_messages
+        if message_id not in previous_bridge_ids
+        and message_id not in projection.bridge_owned_message_ids
+    }
+    drift_ids = tuple(sorted(local_message_ids))
+    merged_messages = {
+        message_id: message
+        for message_id, message in current_messages.items()
+        if message_id not in previous_bridge_ids
+    }
     merged_messages.update(projection.history)
     chat = dict(existing_chat)
     chat.update(
@@ -118,8 +135,8 @@ def _reconciled_payload(
             },
         }
     )
-    variables = dict(existing.get("variables") or {})
     variables["hermes_lineage_key"] = lineage_key
+    variables["hermes_bridge_message_ids"] = list(projection.ordered_message_ids)
     return {"chat": chat, "variables": variables, "folder_id": folder_id}, drift_ids
 
 

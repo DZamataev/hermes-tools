@@ -126,7 +126,10 @@ def _projection_payload(
                 "messages": projection.history,
             },
         },
-        "variables": {"hermes_lineage_key": lineage_key},
+        "variables": {
+            "hermes_lineage_key": lineage_key,
+            "hermes_bridge_message_ids": list(projection.ordered_message_ids),
+        },
         "folder_id": folder_id,
     }
 
