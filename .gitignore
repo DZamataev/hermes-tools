@@ -1,5 +1,6 @@
 .DS_Store
 .superpowers/
+.worktrees/
 Hermes WebUI.app/
 runner/runner.log
 
@@ -10,4 +11,3 @@ runner/runner.log
 bridge-service/data/
 bridge-service/.venv/
 bridge-service/__pycache__/
-
