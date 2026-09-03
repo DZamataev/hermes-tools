@@ -17,7 +17,8 @@ def hello(secret: str, *, nonce: str = "nonce-1", timestamp: int = 1_788_400_000
         "protocol": 1, "kind": "hello", "id": "epoch-1", "correlation_id": "challenge-1",
         "sent_at": datetime.now(timezone.utc),
         "payload": {"timestamp": timestamp, "mac": sign_challenge(secret, nonce, timestamp),
-                    "connector_version": "1.0.0", "routes": []},
+                    "connector_version": "1.1.0",
+                    "capabilities": ["replay_complete"], "routes": []},
     })
 
 

@@ -16,6 +16,7 @@ from hermes_bridge.config import Settings
 
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 1024 * 1024
+REPLAY_COMPLETE_CAPABILITY = "replay_complete"
 
 
 class ProtocolError(ValueError):
@@ -23,6 +24,10 @@ class ProtocolError(ValueError):
 
 
 class AuthenticationError(ProtocolError):
+    pass
+
+
+class ConnectorCompatibilityError(ProtocolError):
     pass
 
 
@@ -64,7 +69,17 @@ class HelloPayload(StrictModel):
     timestamp: int
     mac: str = Field(min_length=1)
     connector_version: str = Field(min_length=1)
+    capabilities: list[str] = Field(default_factory=list)
     routes: list[ProfileRoute]
+
+    @field_validator("capabilities")
+    @classmethod
+    def capabilities_must_be_nonempty_and_unique(
+        cls, value: list[str]
+    ) -> list[str]:
+        if any(not item.strip() for item in value) or len(value) != len(set(value)):
+            raise ValueError("capabilities must be non-empty and unique")
+        return value
 
 
 class HelloFrame(BaseFrame):
@@ -224,6 +239,8 @@ def verify_hello(
     expected = sign_challenge(settings.bridge_secret, challenge.nonce, frame.payload.timestamp)
     if not hmac.compare_digest(frame.payload.mac, expected):
         raise AuthenticationError("authentication failed")
+    if REPLAY_COMPLETE_CAPABILITY not in frame.payload.capabilities:
+        raise ConnectorCompatibilityError("required connector capability unavailable")
 
 
 def parse_incoming(raw: str | bytes) -> IncomingFrame:

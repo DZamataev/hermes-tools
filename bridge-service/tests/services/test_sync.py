@@ -176,9 +176,10 @@ class FakeConnector:
         self.routes = (ProfileRoute(connection_id="local", profile="default", target_profile="default"),)
         self.connected = True
         self.epoch = "epoch-1"
-        self.connector_version = "1.0.0"
+        self.connector_version = "1.1.0"
         self.replay_result = None
         self.replay_results = None
+        self.replay_never_completes = False
         self.commands = []
         self.connection_listener = None
         self.event_listener = None
@@ -189,6 +190,11 @@ class FakeConnector:
 
     async def dispatch(self, command):
         self.commands.append(command)
+        if self.replay_never_completes:
+            await asyncio.Future()
+            if False:
+                yield None
+            return
         if self.replay_results is not None:
             for result in self.replay_results:
                 yield result
@@ -228,6 +234,7 @@ def service(
     messages: dict[str, list[HermesMessage]] | None = None,
     mappings: FakeMappings | None = None,
     operations: FakeOperations | None = None,
+    replay_timeout_seconds: float = 65.0,
 ):
     mappings = mappings or FakeMappings()
     hermes = FakeHermes(sessions or [], messages or {})
@@ -244,6 +251,7 @@ def service(
         connector,
         queue,
         interval_seconds=0.01,
+        replay_timeout_seconds=replay_timeout_seconds,
     )
     return sync, hermes, mirror, mappings, operations, connector, queue
 
@@ -481,6 +489,31 @@ async def test_replay_complete_terminates_without_proof_and_keeps_uncertain(even
     assert queue.reconciled[-1] == (current.lineage_key, True)
 
 
+async def test_replay_timeout_falls_back_to_snapshot_proof_without_resubmit():
+    current = mapping("root-1")
+    op = operation(OperationState.ACCEPTED, last_event_seq=510)
+    operations = FakeOperations([op])
+    sync, hermes, _, _, operations, connector, queue = service(
+        mappings=FakeMappings([current]),
+        operations=operations,
+        messages={
+            "tip-root-1": [
+                HermesMessage("m1", "assistant", "plausible but untagged", 1)
+            ]
+        },
+        replay_timeout_seconds=0.01,
+    )
+    connector.replay_never_completes = True
+
+    report = await asyncio.wait_for(sync.recover_incomplete_operations(), 0.2)
+
+    assert [command.kind for command in connector.commands] == ["replay"]
+    assert hermes.snapshot_requests == [("tip-root-1", "default")]
+    assert operations.values[op.id].state is OperationState.DELIVERY_UNCERTAIN
+    assert report.uncertain == 1
+    assert queue.reconciled[-1] == (current.lineage_key, True)
+
+
 async def test_replayed_error_completion_is_persisted_as_hermes_error():
     current = mapping("root-1")
     op = operation(OperationState.ACCEPTED, last_event_seq=510)
@@ -619,6 +652,35 @@ async def test_same_lineage_reconciliations_cannot_create_two_chats():
     release.set()
     results = await asyncio.gather(first, second)
     assert sum(result.created for result in results) == 1
+    assert sync._lineage_locks.size == 0
+
+
+async def test_cancelled_lineage_waiter_does_not_leak_keyed_lock():
+    current = mapping("root-1")
+    sync, _, mirror, _, *_ = service(mappings=FakeMappings([current]))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def reconcile(identity, messages):
+        started.set()
+        await release.wait()
+        return MirrorResult(current.openwebui_chat_id, False, (), True)
+
+    mirror.reconcile = reconcile
+    owner = asyncio.create_task(sync.reconcile_lineage(current.lineage_key))
+    await started.wait()
+    waiter = asyncio.create_task(sync.reconcile_lineage(current.lineage_key))
+    await asyncio.sleep(0)
+    assert sync._lineage_locks.size == 1
+
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert sync._lineage_locks.size == 1
+
+    release.set()
+    await owner
+    assert sync._lineage_locks.size == 0
 
 
 async def test_current_status_refreshes_operation_counts():

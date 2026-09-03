@@ -14,13 +14,20 @@ from hermes_bridge.connector.protocol import (
 )
 
 
-def hello_for(challenge, secret):
+def hello_for(
+    challenge,
+    secret,
+    *,
+    capabilities=("replay_complete",),
+    connector_version="1.1.0",
+):
     timestamp = int(datetime.now(timezone.utc).timestamp())
     return {
         "protocol": 1, "kind": "hello", "id": "epoch-1", "correlation_id": challenge["id"],
         "sent_at": datetime.now(timezone.utc).isoformat(),
         "payload": {"timestamp": timestamp, "mac": sign_challenge(secret, challenge["payload"]["nonce"], timestamp),
-                    "connector_version": "1.0.0", "routes": []},
+                    "connector_version": connector_version,
+                    "capabilities": list(capabilities), "routes": []},
     }
 
 
@@ -33,6 +40,39 @@ def test_connector_rejects_wrong_secret(settings):
             assert error["kind"] == "error"
             assert error["payload"]["code"] == "authentication_failed"
             assert settings.bridge_secret not in str(error)
+
+
+def test_new_bridge_rejects_legacy_hello_without_capabilities(settings):
+    app = create_app(settings)
+    with TestClient(app) as client:
+        with client.websocket_connect("/connector") as socket:
+            challenge = socket.receive_json()
+            legacy = hello_for(challenge, settings.bridge_secret, connector_version="1.0.0")
+            del legacy["payload"]["capabilities"]
+            socket.send_json(legacy)
+            error = socket.receive_json()
+            assert error["kind"] == "error"
+            assert error["payload"]["code"] == "incompatible_connector"
+        assert app.state.connector_hub.connected is False
+        assert client.get("/health/ready").json()["components"]["desktop_connector"] == "unavailable"
+
+
+def test_bridge_rejects_new_hello_without_replay_complete_capability(settings):
+    app = create_app(settings)
+    with TestClient(app) as client:
+        with client.websocket_connect("/connector") as socket:
+            challenge = socket.receive_json()
+            socket.send_json(
+                hello_for(
+                    challenge,
+                    settings.bridge_secret,
+                    capabilities=("queued_submit",),
+                )
+            )
+            error = socket.receive_json()
+            assert error["kind"] == "error"
+            assert error["payload"]["code"] == "incompatible_connector"
+        assert app.state.connector_hub.connected is False
 
 
 class FakeSocket:
@@ -51,7 +91,8 @@ def hello(epoch="epoch-1"):
     return HelloFrame.model_validate({
         "protocol": 1, "kind": "hello", "id": epoch, "correlation_id": "challenge",
         "sent_at": datetime.now(timezone.utc),
-        "payload": {"timestamp": 1, "mac": "mac", "connector_version": "1.0.0",
+        "payload": {"timestamp": 1, "mac": "mac", "connector_version": "1.1.0",
+                    "capabilities": ["replay_complete"],
                     "routes": [{"connection_id": "local", "profile": "default", "target_profile": "default"}]},
     })
 
@@ -151,6 +192,25 @@ async def test_replay_complete_terminates_correlated_dispatch():
     })
     await hub.receive(terminal)
     assert await asyncio.wait_for(task, 0.1) == [terminal]
+
+
+async def test_cancelled_replay_dispatch_removes_pending_correlation():
+    hub, socket = ConnectorHub(20), FakeSocket()
+    await hub.connect(socket, hello())
+    command = ReplayFrame.model_validate({
+        "protocol": 1, "kind": "replay", "id": "replay-timeout",
+        "correlation_id": "op-timeout", "sent_at": datetime.now(timezone.utc),
+        "payload": {"operation_id": "op-timeout", "route": {
+            "connection_id": "local", "profile": "default", "target_profile": "default"
+        }, "runtime_session_id": "runtime-1", "after_seq": 7},
+    })
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.01):
+            await _collect(hub.dispatch(command))
+
+    assert hub._pending == {}
+    assert [frame["kind"] for frame in socket.sent] == ["replay"]
 
 
 async def _collect(events):

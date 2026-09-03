@@ -1,5 +1,6 @@
 const PROTOCOL_VERSION = 1
-const CONNECTOR_VERSION = '1.0.0'
+const CONNECTOR_VERSION = '1.1.0'
+const CONNECTOR_CAPABILITIES = ['replay_complete']
 const HEARTBEAT_INTERVAL_MS = 5_000
 const REQUEST_TIMEOUT_MS = 60_000
 const MAX_FRAME_BYTES = 1024 * 1024
@@ -430,6 +431,7 @@ export function createConnector({
         timestamp,
         mac,
         connector_version: CONNECTOR_VERSION,
+        capabilities: CONNECTOR_CAPABILITIES,
         routes: currentRoutes.map(route => route.wire)
       })
       epoch = hello.id

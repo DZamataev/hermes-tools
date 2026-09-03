@@ -19,6 +19,7 @@ class Settings:
     log_level: str = "info"
     sync_interval_seconds: float = 30.0
     connector_heartbeat_timeout_seconds: float = 20.0
+    connector_replay_timeout_seconds: float = 65.0
 
     @property
     def database_path(self) -> Path:
@@ -77,5 +78,8 @@ class Settings:
             sync_interval_seconds=decimal("BRIDGE_SYNC_INTERVAL_SECONDS", "30"),
             connector_heartbeat_timeout_seconds=decimal(
                 "CONNECTOR_HEARTBEAT_TIMEOUT_SECONDS", "20"
+            ),
+            connector_replay_timeout_seconds=decimal(
+                "CONNECTOR_REPLAY_TIMEOUT_SECONDS", "65"
             ),
         )

@@ -45,6 +45,7 @@ def create_app(settings: Settings) -> FastAPI:
             hub,
             queue,
             interval_seconds=settings.sync_interval_seconds,
+            replay_timeout_seconds=settings.connector_replay_timeout_seconds,
         )
         app.state.database = database
         app.state.mapping_repository = mappings

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any
@@ -48,6 +50,44 @@ class RecoveryReport:
     failures: tuple[SyncFailure, ...]
 
 
+@dataclass
+class _KeyedLockEntry:
+    lock: asyncio.Lock
+    users: int = 0
+
+
+class _KeyedLocks:
+    """Per-key locks whose entries live only while owned or awaited."""
+
+    def __init__(self) -> None:
+        self._entries: dict[str, _KeyedLockEntry] = {}
+
+    @asynccontextmanager
+    async def hold(self, key: str) -> AsyncIterator[None]:
+        # These mutations contain no await and therefore cannot interleave on
+        # the service's event loop.
+        entry = self._entries.get(key)
+        if entry is None:
+            entry = _KeyedLockEntry(asyncio.Lock())
+            self._entries[key] = entry
+        entry.users += 1
+        acquired = False
+        try:
+            await entry.lock.acquire()
+            acquired = True
+            yield
+        finally:
+            if acquired:
+                entry.lock.release()
+            entry.users -= 1
+            if entry.users == 0 and self._entries.get(key) is entry:
+                del self._entries[key]
+
+    @property
+    def size(self) -> int:
+        return len(self._entries)
+
+
 class SyncService:
     """Coordinate snapshot truth without ever guessing whether a submit landed."""
 
@@ -63,6 +103,7 @@ class SyncService:
         *,
         interval_seconds: float,
         event_queue_size: int = 256,
+        replay_timeout_seconds: float = 65.0,
     ) -> None:
         self._hermes = hermes
         self._mirror = mirror
@@ -72,6 +113,7 @@ class SyncService:
         self._connector = connector
         self._queue = queue
         self._interval = interval_seconds
+        self._replay_timeout = replay_timeout_seconds
         self._event_queue: asyncio.Queue[ConnectorEvent] = asyncio.Queue(event_queue_size)
         self._tasks: set[asyncio.Task] = set()
         self._periodic_task: asyncio.Task | None = None
@@ -88,7 +130,7 @@ class SyncService:
         self._dropped_events = 0
         self._scan_lock = asyncio.Lock()
         self._recovery_lock = asyncio.Lock()
-        self._lineage_locks: dict[str, asyncio.Lock] = {}
+        self._lineage_locks = _KeyedLocks()
 
     @property
     def background_task_count(self) -> int:
@@ -229,7 +271,7 @@ class SyncService:
                     seen_lineages.add(identity.lineage_key)
                     current: SessionMapping | None = None
                     try:
-                        async with self._lineage_lock(identity.lineage_key):
+                        async with self._lineage_locks.hold(identity.lineage_key):
                             previous = await self._mappings.by_lineage_key(
                                 identity.lineage_key
                             )
@@ -293,7 +335,7 @@ class SyncService:
         return sessions
 
     async def reconcile_lineage(self, lineage_key: str) -> MirrorResult:
-        async with self._lineage_lock(lineage_key):
+        async with self._lineage_locks.hold(lineage_key):
             return await self._reconcile_lineage_locked(lineage_key)
 
     async def _reconcile_lineage_locked(self, lineage_key: str) -> MirrorResult:
@@ -450,12 +492,48 @@ class SyncService:
                 },
             }
         )
+        try:
+            async with asyncio.timeout(self._replay_timeout):
+                outcome, current = await self._consume_replay(
+                    operation, mapping, command
+                )
+        except TimeoutError:
+            latest = await self._operations.get(operation.id) or operation
+            current = await self._mark_replay_inconclusive(
+                latest,
+                code="replay_timeout",
+                message="replay timed out before proving completion",
+            )
+            return await self._snapshot_proof(current, mapping)
+
+        if outcome == "completed":
+            await self.reconcile_lineage(mapping.lineage_key)
+            return current
+        if outcome == "snapshot":
+            current = await self._mark_replay_inconclusive(
+                current,
+                code="replay_unavailable",
+                message="replay did not provide authoritative completion",
+            )
+            return await self._snapshot_proof(current, mapping)
+        return await self._mark_replay_inconclusive(
+            current,
+            code="replay_incomplete",
+            message="replay did not prove completion",
+        )
+
+    async def _consume_replay(
+        self,
+        operation: Operation,
+        mapping: SessionMapping,
+        command: ReplayFrame,
+    ) -> tuple[str, Operation]:
         current = operation
         async for frame in self._connector.dispatch(command):
             if isinstance(frame, ReplayGapFrame):
-                return await self._snapshot_proof(current, mapping)
+                return "snapshot", current
             if isinstance(frame, CommandErrorFrame):
-                return await self._snapshot_proof(current, mapping)
+                return "snapshot", current
             if not isinstance(frame, HermesEventFrame):
                 continue
             event = normalize_event(frame, connector_epoch=self._connector.epoch)
@@ -485,21 +563,27 @@ class SyncService:
                     error_message="Hermes turn failed" if hermes_error else None,
                     last_event_seq=event.sequence,
                 )
-                await self.reconcile_lineage(mapping.lineage_key)
-                return current
-        if current.state in {OperationState.ACCEPTED, OperationState.STREAMING}:
-            current = await self._operations.transition(
-                current.id,
-                OperationState.DELIVERY_UNCERTAIN,
-                error_code="replay_incomplete",
-                error_message="replay did not prove completion",
-            )
-        return current
+                return "completed", current
+        return "incomplete", current
+
+    async def _mark_replay_inconclusive(
+        self, operation: Operation, *, code: str, message: str
+    ) -> Operation:
+        if operation.state is OperationState.DELIVERY_UNCERTAIN:
+            return operation
+        if operation.state is OperationState.COMPLETED:
+            return operation
+        return await self._operations.transition(
+            operation.id,
+            OperationState.DELIVERY_UNCERTAIN,
+            error_code=code,
+            error_message=message,
+        )
 
     async def _snapshot_proof(
         self, operation: Operation, mapping: SessionMapping
     ) -> Operation:
-        async with self._lineage_lock(mapping.lineage_key):
+        async with self._lineage_locks.hold(mapping.lineage_key):
             return await self._snapshot_proof_locked(operation, mapping)
 
     async def _snapshot_proof_locked(
@@ -519,6 +603,8 @@ class SyncService:
             messages,
         )
         self._mark_reconciled(mapping.lineage_key)
+        if operation.state is OperationState.COMPLETED:
+            return operation
         # An explicit durable identity is proof. Text, order, and timestamps are not.
         tagged_assistant = next(
             (
@@ -596,9 +682,6 @@ class SyncService:
     async def current_status_snapshot(self) -> dict[str, Any]:
         await self._refresh_operation_counts()
         return self.status_snapshot()
-
-    def _lineage_lock(self, lineage_key: str) -> asyncio.Lock:
-        return self._lineage_locks.setdefault(lineage_key, asyncio.Lock())
 
     @property
     def ready_components(self) -> dict[str, str]:

@@ -13,6 +13,7 @@ from hermes_bridge.connector.hub import ConnectorHub
 from hermes_bridge.connector.protocol import (
     AuthenticationError,
     Challenge,
+    ConnectorCompatibilityError,
     HeartbeatFrame,
     HelloFrame,
     ProtocolError,
@@ -58,6 +59,13 @@ def create_connector_router(settings: Settings, hub: ConnectorHub) -> APIRouter:
                     raise ProtocolError("hello already completed")
                 else:
                     await hub.receive(parsed, socket)
+        except ConnectorCompatibilityError:
+            await _safe_error(
+                socket,
+                "incompatible_connector",
+                "connector capability is unavailable",
+            )
+            await socket.close(code=1008)
         except AuthenticationError:
             await _safe_error(socket, "authentication_failed", "connector authentication failed")
             await socket.close(code=1008)

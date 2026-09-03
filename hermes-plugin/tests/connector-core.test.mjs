@@ -215,6 +215,8 @@ test('valid challenge response signs nonce and advertises snake-case routes', as
   assert.ok(hello)
   assert.equal(hello.protocol, 1)
   assert.equal(hello.correlation_id, 'command-challenge-1')
+  assert.equal(hello.payload.connector_version, '1.1.0')
+  assert.deepEqual(hello.payload.capabilities, ['replay_complete'])
   assert.deepEqual(hello.payload.routes, [WIRE_ROUTE])
   const expected = createHmac('sha256', SECRET)
     .update(`nonce-1\n${hello.payload.timestamp}`)

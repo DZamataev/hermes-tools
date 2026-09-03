@@ -30,6 +30,7 @@ def test_settings_accept_explicit_local_configuration(tmp_path):
     assert settings.log_level == "info"
     assert settings.sync_interval_seconds == 30.0
     assert settings.connector_heartbeat_timeout_seconds == 20.0
+    assert settings.connector_replay_timeout_seconds == 65.0
 
 
 @pytest.mark.parametrize("missing", ["API_SERVER_KEY", "OPENWEBUI_API_KEY", "HERMES_BRIDGE_SECRET"])
