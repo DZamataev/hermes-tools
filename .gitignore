@@ -6,8 +6,9 @@ runner/runner.log
 
 # Local credentials and bridge runtime state.
 .env
+# .env.local is created by `make local-env` and must stay local.
 .env.*
 !.env.example
 bridge-service/data/
 bridge-service/.venv/
-bridge-service/__pycache__/
+__pycache__/

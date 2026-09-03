@@ -1,9 +1,13 @@
-.PHONY: bootstrap test app start stop status openwebui-fetch
+.PHONY: bootstrap local-env test app start stop status openwebui-fetch
 
 bootstrap:
 	git submodule update --init --recursive
 	git -C open-webui remote get-url upstream >/dev/null 2>&1 || \
 		git -C open-webui remote add upstream git@github.com:open-webui/open-webui.git
+	$(MAKE) local-env
+
+local-env:
+	/bin/zsh runner/bootstrap-local-env.sh
 
 test:
 	/bin/zsh tests/test_repository_layout.sh
@@ -24,4 +28,3 @@ status:
 openwebui-fetch:
 	git -C open-webui fetch origin
 	git -C open-webui fetch upstream
-
