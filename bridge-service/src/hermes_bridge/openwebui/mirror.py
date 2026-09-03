@@ -28,6 +28,10 @@ class MirrorService:
         self._client = client
         self._mappings = mappings
 
+    async def verify(self) -> None:
+        """Verify owner-scoped credentials and ensure the bridge folder exists."""
+        await self._client.ensure_folder("Hermes")
+
     async def reconcile(
         self, identity: SessionIdentity, messages: Sequence[HermesMessage]
     ) -> MirrorResult:

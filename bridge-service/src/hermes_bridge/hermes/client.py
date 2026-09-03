@@ -26,6 +26,14 @@ class HermesSession:
     id: str
     lineage_root_id: str
     title: str
+    message_count: int | None = None
+    last_active: int | float | str | None = None
+
+    @property
+    def revision(self) -> str | None:
+        if self.message_count is None and self.last_active is None:
+            return None
+        return f"{self.message_count if self.message_count is not None else ''}:{self.last_active if self.last_active is not None else ''}"
 
 
 @dataclass(frozen=True)
@@ -36,6 +44,7 @@ class HermesMessage:
     role: str
     content: str
     created_at: int | float | str
+    bridge_operation_id: str | None = None
 
 
 class HermesReadClient:
@@ -130,6 +139,8 @@ class HermesReadClient:
             page = payload
         elif isinstance(payload, Mapping) and response_key in payload:
             page = payload[response_key]
+        elif isinstance(payload, Mapping) and "data" in payload:
+            page = payload["data"]
         else:
             raise HermesReadError(f"invalid response shape from {endpoint}")
 
@@ -140,13 +151,29 @@ class HermesReadClient:
 
 def _session_from_payload(payload: Mapping[str, Any]) -> HermesSession:
     session_id = _required_string(payload, "id", "session")
-    lineage_root_id = payload.get("lineage_root_id", session_id)
+    lineage_root_id = (
+        payload.get("lineage_root_id")
+        or payload.get("_lineage_root_id")
+        or session_id
+    )
     if not isinstance(lineage_root_id, str) or not lineage_root_id:
         raise HermesReadError("invalid session response shape: lineage_root_id must be a non-empty string")
     title = payload.get("title", "")
     if not isinstance(title, str):
         raise HermesReadError("invalid session response shape: title must be a string")
-    return HermesSession(id=session_id, lineage_root_id=lineage_root_id, title=title)
+    message_count = payload.get("message_count")
+    if isinstance(message_count, bool) or not isinstance(message_count, int):
+        message_count = None
+    last_active = payload.get("last_active")
+    if isinstance(last_active, bool) or not isinstance(last_active, int | float | str):
+        last_active = None
+    return HermesSession(
+        id=session_id,
+        lineage_root_id=lineage_root_id,
+        title=title,
+        message_count=message_count,
+        last_active=last_active,
+    )
 
 
 def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
@@ -157,10 +184,19 @@ def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
     content = payload.get("display_content", payload.get("content"))
     if not isinstance(content, str):
         raise HermesReadError("invalid message response shape: content must be a string")
-    created_at = payload.get("created_at")
+    created_at = payload.get("created_at", payload.get("timestamp"))
     if isinstance(created_at, bool) or not isinstance(created_at, int | float | str):
         raise HermesReadError("invalid message response shape: created_at must be a timestamp")
-    return HermesMessage(id=message_id, role=role, content=content, created_at=created_at)
+    bridge_operation_id = payload.get("bridge_operation_id")
+    if not isinstance(bridge_operation_id, str) or not bridge_operation_id:
+        bridge_operation_id = None
+    return HermesMessage(
+        id=message_id,
+        role=role,
+        content=content,
+        created_at=created_at,
+        bridge_operation_id=bridge_operation_id,
+    )
 
 
 def _required_string(payload: Mapping[str, Any], field: str, resource: str) -> str:

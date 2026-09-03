@@ -42,6 +42,8 @@ def _mapping(row: aiosqlite.Row) -> SessionMapping:
         last_snapshot_hash=row["last_snapshot_hash"],
         created_at=_read_timestamp(row["created_at"]),
         updated_at=_read_timestamp(row["updated_at"]),
+        last_source_revision=row["last_source_revision"],
+        last_event_epoch=row["last_event_epoch"],
     )
 
 
@@ -60,6 +62,7 @@ def _operation(row: aiosqlite.Row) -> Operation:
         last_event_seq=row["last_event_seq"],
         created_at=_read_timestamp(row["created_at"]),
         updated_at=_read_timestamp(row["updated_at"]),
+        runtime_session_id=row["runtime_session_id"],
     )
 
 
@@ -123,6 +126,25 @@ class MappingRepository:
         row = await self._fetch_mapping_by_lineage(self._database.connection, lineage_key)
         return _mapping(row) if row is not None else None
 
+    async def by_route_and_stored_id(
+        self, connection_id: str, profile: str, stored_session_id: str
+    ) -> SessionMapping | None:
+        cursor = await self._database.connection.execute(
+            """
+            SELECT * FROM session_mapping
+            WHERE connection_id = ? AND profile = ? AND stored_session_id = ?
+            """,
+            (connection_id, profile, stored_session_id),
+        )
+        row = await cursor.fetchone()
+        return _mapping(row) if row is not None else None
+
+    async def list_all(self) -> list[SessionMapping]:
+        cursor = await self._database.connection.execute(
+            "SELECT * FROM session_mapping ORDER BY connection_id, profile, lineage_root_id"
+        )
+        return [_mapping(row) for row in await cursor.fetchall()]
+
     async def update_snapshot(
         self,
         lineage_key: str,
@@ -139,6 +161,25 @@ class MappingRepository:
                 WHERE connection_id || ':' || profile || ':' || lineage_root_id = ?
                 """,
                 (last_hermes_message_id, snapshot_hash, now, lineage_key),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"no session mapping for lineage {lineage_key}")
+            row = await self._fetch_mapping_by_lineage(connection, lineage_key)
+        assert row is not None
+        return _mapping(row)
+
+    async def update_source_revision(
+        self, lineage_key: str, source_revision: str
+    ) -> SessionMapping:
+        now = _timestamp(utc_now())
+        async with self._database.write_transaction() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE session_mapping
+                SET last_source_revision = ?, updated_at = ?
+                WHERE connection_id || ':' || profile || ':' || lineage_root_id = ?
+                """,
+                (source_revision, now, lineage_key),
             )
             if cursor.rowcount != 1:
                 raise LookupError(f"no session mapping for lineage {lineage_key}")
@@ -221,7 +262,10 @@ class OperationRepository:
     async def transition(
         self, operation_id: UUID, target: OperationState, **fields: object
     ) -> Operation:
-        allowed_fields = {"result_text", "error_code", "error_message", "last_event_seq"}
+        allowed_fields = {
+            "result_text", "error_code", "error_message", "last_event_seq",
+            "runtime_session_id",
+        }
         unknown_fields = set(fields) - allowed_fields
         if unknown_fields:
             names = ", ".join(sorted(unknown_fields))
@@ -287,6 +331,7 @@ class OperationRepository:
                 "error_code": current.error_code,
                 "error_message": current.error_message,
                 "last_event_seq": current.last_event_seq,
+                "runtime_session_id": current.runtime_session_id,
             }
             next_values.update(fields)
             now = _timestamp(utc_now())
@@ -294,7 +339,7 @@ class OperationRepository:
                 """
                 UPDATE operation
                 SET state = ?, result_text = ?, error_code = ?, error_message = ?,
-                    last_event_seq = ?, lineage_key = ?, updated_at = ?
+                    last_event_seq = ?, runtime_session_id = ?, lineage_key = ?, updated_at = ?
                 WHERE operation_id = ?
                 """,
                 (
@@ -303,6 +348,7 @@ class OperationRepository:
                     next_values["error_code"],
                     next_values["error_message"],
                     next_values["last_event_seq"],
+                    next_values["runtime_session_id"],
                     lineage_key,
                     now,
                     str(operation_id),
@@ -331,6 +377,22 @@ class OperationRepository:
             ),
         )
         return [_operation(row) for row in await cursor.fetchall()]
+
+    async def get(self, operation_id: UUID) -> Operation | None:
+        cursor = await self._database.connection.execute(
+            "SELECT * FROM operation WHERE operation_id = ?", (str(operation_id),)
+        )
+        row = await cursor.fetchone()
+        return _operation(row) if row is not None else None
+
+    async def count_by_state(self) -> dict[str, int]:
+        counts = {state.value: 0 for state in OperationState}
+        cursor = await self._database.connection.execute(
+            "SELECT state, COUNT(*) AS count FROM operation GROUP BY state"
+        )
+        for row in await cursor.fetchall():
+            counts[row["state"]] = row["count"]
+        return counts
 
     async def list_pending(self, lineage_key: str) -> list[Operation]:
         cursor = await self._database.connection.execute(
@@ -386,8 +448,8 @@ class EventRepository:
                 """
                 INSERT INTO turn_event (
                     event_id, lineage_key, sequence, kind, text, operation_id,
-                    stored_session_id, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    stored_session_id, connector_epoch, occurred_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(event_id) DO NOTHING
                 """,
                 (
@@ -398,6 +460,7 @@ class EventRepository:
                     event.text,
                     str(event.operation_id) if event.operation_id is not None else None,
                     event.stored_session_id,
+                    event.connector_epoch,
                     _timestamp(event.occurred_at),
                 ),
             )
@@ -409,13 +472,28 @@ class EventRepository:
                 """
                 UPDATE session_mapping
                 SET last_event_seq = CASE
+                        WHEN ? IS NOT NULL AND last_event_epoch IS NOT ? THEN ?
                         WHEN last_event_seq IS NULL OR last_event_seq < ? THEN ?
                         ELSE last_event_seq
+                    END,
+                    last_event_epoch = CASE
+                        WHEN ? IS NOT NULL THEN ?
+                        ELSE last_event_epoch
                     END,
                     updated_at = ?
                 WHERE connection_id || ':' || profile || ':' || lineage_root_id = ?
                 """,
-                (event.sequence, event.sequence, now, event.lineage_key),
+                (
+                    event.connector_epoch,
+                    event.connector_epoch,
+                    event.sequence,
+                    event.sequence,
+                    event.sequence,
+                    event.connector_epoch,
+                    event.connector_epoch,
+                    now,
+                    event.lineage_key,
+                ),
             )
             if event.operation_id is not None:
                 await connection.execute(

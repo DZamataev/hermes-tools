@@ -356,3 +356,66 @@ async def test_duplicate_event_does_not_advance_mapping_watermark(repositories):
     assert duplicate_recorded is False
     assert restored is not None
     assert restored.watermark == 9
+
+
+async def test_recovery_runtime_and_inventory_revision_survive_reopen(tmp_path):
+    path = tmp_path / "bridge.db"
+    database = await Database.open(path)
+    mappings = MappingRepository(database)
+    operations = OperationRepository(database)
+    mapping = await mappings.upsert_session(
+        SessionIdentity("local", "default", "root-1", "tip-1", "Chat")
+    )
+    await mappings.attach_chat(mapping.lineage_key, "chat-1")
+    await mappings.update_source_revision(mapping.lineage_key, "2:42")
+    operation, _ = await operations.create_or_get(
+        TurnRequest("chat-1", "user-1", "assistant-1", "hello")
+    )
+    await operations.transition(operation.id, OperationState.OFFERED)
+    await operations.transition(
+        operation.id,
+        OperationState.ACCEPTED,
+        runtime_session_id="runtime-1",
+    )
+    await database.close()
+
+    database = await Database.open(path)
+    mappings = MappingRepository(database)
+    operations = OperationRepository(database)
+    restored_mapping = await mappings.by_lineage_key(mapping.lineage_key)
+    restored_operation = await operations.get(operation.id)
+    await database.close()
+
+    assert restored_mapping is not None
+    assert restored_mapping.last_source_revision == "2:42"
+    assert restored_operation is not None
+    assert restored_operation.runtime_session_id == "runtime-1"
+
+
+async def test_new_connector_epoch_can_restart_mapping_sequence(repositories):
+    mapping = await repositories.mappings.upsert_session(
+        SessionIdentity("local", "default", "root-1", "tip-1", "Chat")
+    )
+    await repositories.events.record(
+        TurnEvent(
+            "old-900",
+            mapping.lineage_key,
+            900,
+            "message.delta",
+            connector_epoch="epoch-old",
+        )
+    )
+    await repositories.events.record(
+        TurnEvent(
+            "new-1",
+            mapping.lineage_key,
+            1,
+            "message.delta",
+            connector_epoch="epoch-new",
+        )
+    )
+
+    restored = await repositories.mappings.by_lineage_key(mapping.lineage_key)
+    assert restored is not None
+    assert restored.last_event_epoch == "epoch-new"
+    assert restored.last_event_seq == 1

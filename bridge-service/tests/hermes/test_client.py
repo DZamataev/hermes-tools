@@ -78,6 +78,59 @@ async def test_iter_sessions_accepts_empty_inventory():
     assert [session async for session in client.iter_sessions("default")] == []
 
 
+async def test_reads_installed_hermes_data_envelope_and_field_names():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/sessions":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "tip-2",
+                            "_lineage_root_id": "root-1",
+                            "title": "Real shape",
+                            "message_count": 2,
+                            "last_active": 42.5,
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"id": "1", "role": "user", "content": "hello", "timestamp": 41},
+                    {"id": "2", "role": "assistant", "content": "hi", "timestamp": 42},
+                ]
+            },
+        )
+
+    client = HermesReadClient(
+        "http://hermes", "secret", transport=httpx.MockTransport(handler)
+    )
+    sessions = [session async for session in client.iter_sessions("default")]
+    messages = await client.read_messages("tip-2", "default")
+
+    assert sessions[0].lineage_root_id == "root-1"
+    assert sessions[0].revision == "2:42.5"
+    assert [message.created_at for message in messages] == [41, 42]
+
+
+async def test_null_installed_lineage_root_falls_back_to_tip():
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"data": [{"id": "tip-1", "_lineage_root_id": None, "title": "Chat"}]},
+            )
+        ),
+    )
+    sessions = [session async for session in client.iter_sessions("default")]
+    assert sessions[0].lineage_root_id == "tip-1"
+
+
 @pytest.mark.parametrize(
     ("status_code", "endpoint"),
     [(401, "/api/sessions"), (404, "/api/sessions/session-1/messages")],

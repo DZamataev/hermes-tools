@@ -90,6 +90,8 @@ class SessionMapping:
     last_snapshot_hash: str | None
     created_at: datetime
     updated_at: datetime
+    last_source_revision: str | None = None
+    last_event_epoch: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "created_at", _as_utc(self.created_at))
@@ -132,6 +134,7 @@ class Operation:
     last_event_seq: int | None
     created_at: datetime
     updated_at: datetime
+    runtime_session_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "created_at", _as_utc(self.created_at))
@@ -148,6 +151,7 @@ class TurnEvent:
     operation_id: UUID | None = None
     stored_session_id: str | None = None
     occurred_at: datetime = field(default_factory=utc_now)
+    connector_epoch: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "occurred_at", _as_utc(self.occurred_at))

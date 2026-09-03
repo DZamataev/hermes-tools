@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from hermes_bridge.connector.protocol import (
@@ -37,6 +37,18 @@ class ConnectorHub:
         self._last_heartbeat = 0.0
         self._pending: dict[str, asyncio.Queue[ConnectorEvent | BaseException]] = {}
         self._lock = asyncio.Lock()
+        self._on_connect: Callable[[HelloFrame], None] | None = None
+        self._on_event: Callable[[ConnectorEvent], None] | None = None
+
+    def set_observer(
+        self,
+        *,
+        on_connect: Callable[[HelloFrame], None] | None,
+        on_event: Callable[[ConnectorEvent], None] | None,
+    ) -> None:
+        """Set bounded service callbacks; observers must return immediately."""
+        self._on_connect = on_connect
+        self._on_event = on_event
 
     @property
     def connected(self) -> bool:
@@ -65,6 +77,8 @@ class ConnectorHub:
             self._last_heartbeat = time.monotonic()
         if old is not None and old is not socket:
             await old.close(code=1012, reason="replaced by newer connector")
+        if self._on_connect is not None:
+            self._on_connect(hello)
 
     async def heartbeat(self, frame: HeartbeatFrame, socket: Any | None = None) -> None:
         if (socket is not None and socket is not self._socket) or frame.payload.epoch != self._epoch:
@@ -106,15 +120,17 @@ class ConnectorHub:
         if socket is not None and socket is not self._socket:
             raise ConnectorDisconnected("event came from a replaced connector")
         queue = self._pending.get(event.correlation_id)
-        if queue is None:
-            return
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull:
-            socket = self._socket
-            if socket is not None:
-                await socket.close(code=1009, reason="connector event queue overflow")
-                await self.disconnect(socket)
+        if queue is not None:
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                socket = self._socket
+                if socket is not None:
+                    await socket.close(code=1009, reason="connector event queue overflow")
+                    await self.disconnect(socket)
+                return
+        if self._on_event is not None:
+            self._on_event(event)
 
 
 def _terminal(event: ConnectorEvent) -> bool:

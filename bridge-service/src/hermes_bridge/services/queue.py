@@ -211,7 +211,11 @@ class LineageQueue:
             async for frame in self._connector.dispatch(command):
                 if isinstance(frame, AcceptedFrame):
                     self._validate_operation(frame.payload.operation_id, operation.id)
-                    job.operation = await self._operations.transition(operation.id, OperationState.ACCEPTED)
+                    job.operation = await self._operations.transition(
+                        operation.id,
+                        OperationState.ACCEPTED,
+                        runtime_session_id=frame.payload.runtime_session_id,
+                    )
                     accepted = True
                     runtime_session_id = frame.payload.runtime_session_id
                 elif isinstance(frame, CommandErrorFrame):
@@ -363,3 +367,27 @@ class LineageQueue:
             tasks = [lineage.worker for lineage in self._lineages.values() if lineage.worker]
         for task in tasks: task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def reconcile_lineage(
+        self, mapping: SessionMapping, *, blocked: bool
+    ) -> None:
+        """Apply durable recovery state and wake pending work when it is safe."""
+        async with self._lock:
+            if self._closed:
+                return
+            lineage = self._lineages.get(mapping.lineage_key)
+            if lineage is None:
+                if blocked:
+                    return
+                lineage = _Lineage(mapping, asyncio.Queue(self._queue_size))
+                self._lineages[mapping.lineage_key] = lineage
+            lineage.mapping = mapping
+            lineage.blocked = blocked
+            if blocked:
+                return
+            if lineage.worker is None or lineage.worker.done() or lineage.worker.cancelling():
+                lineage.worker = asyncio.create_task(self._run(mapping.lineage_key, lineage))
+            try:
+                lineage.wake.put_nowait(None)
+            except asyncio.QueueFull:
+                pass

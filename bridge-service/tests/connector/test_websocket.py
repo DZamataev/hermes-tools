@@ -113,3 +113,19 @@ async def test_stale_heartbeat_marks_hub_offline():
     await hub.connect(socket, hello())
     await asyncio.sleep(0.005)
     assert hub.connected is False
+
+
+async def test_unsolicited_event_reaches_observer_without_affecting_dispatch():
+    hub, socket = ConnectorHub(20), FakeSocket()
+    observed = []
+    hub.set_observer(on_connect=lambda frame: None, on_event=observed.append)
+    await hub.connect(socket, hello())
+    event = HermesEventFrame.model_validate({
+        "protocol": 1, "kind": "hermes_event", "id": "desktop-1",
+        "correlation_id": "not-a-dispatch", "sent_at": datetime.now(timezone.utc),
+        "payload": {"operation_id": None, "connection_id": "local", "profile": "default",
+                    "session_id": "runtime", "seq": 1, "event_type": "message.complete",
+                    "data": {"text": "desktop answer"}},
+    })
+    await hub.receive(event, socket)
+    assert observed == [event]

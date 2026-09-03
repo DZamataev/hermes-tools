@@ -24,12 +24,22 @@ class MappingStore(Protocol):
 
     async def by_lineage_key(self, lineage_key: str) -> SessionMapping | None: ...
 
+    async def by_route_and_stored_id(
+        self, connection_id: str, profile: str, stored_session_id: str
+    ) -> SessionMapping | None: ...
+
+    async def list_all(self) -> list[SessionMapping]: ...
+
     async def update_snapshot(
         self,
         lineage_key: str,
         *,
         last_hermes_message_id: str | None,
         snapshot_hash: str,
+    ) -> SessionMapping: ...
+
+    async def update_source_revision(
+        self, lineage_key: str, source_revision: str
     ) -> SessionMapping: ...
 
 
@@ -41,6 +51,12 @@ class OperationStore(Protocol):
     ) -> Operation: ...
 
     async def list_pending(self, lineage_key: str) -> list[Operation]: ...
+
+    async def list_incomplete(self) -> list[Operation]: ...
+
+    async def get(self, operation_id: UUID) -> Operation | None: ...
+
+    async def count_by_state(self) -> dict[str, int]: ...
 
 
 class EventStore(Protocol):

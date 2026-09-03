@@ -15,6 +15,7 @@ class Database:
     def __init__(self, connection: aiosqlite.Connection) -> None:
         self._connection = connection
         self._write_lock = asyncio.Lock()
+        self._is_open = True
 
     @property
     def connection(self) -> aiosqlite.Connection:
@@ -49,6 +50,8 @@ class Database:
                 last_hermes_message_id TEXT,
                 last_event_seq INTEGER,
                 last_snapshot_hash TEXT,
+                last_source_revision TEXT,
+                last_event_epoch TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(connection_id, profile, lineage_root_id)
@@ -67,6 +70,7 @@ class Database:
                 error_code TEXT,
                 error_message TEXT,
                 last_event_seq INTEGER,
+                runtime_session_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(chat_id, user_message_id)
@@ -80,16 +84,37 @@ class Database:
                 text TEXT,
                 operation_id TEXT,
                 stored_session_id TEXT,
+                connector_epoch TEXT,
                 occurred_at TEXT NOT NULL
             );
             """
         )
         cursor = await self._connection.execute("PRAGMA table_info(operation)")
         operation_columns = {row["name"] for row in await cursor.fetchall()}
+        cursor = await self._connection.execute("PRAGMA table_info(session_mapping)")
+        mapping_columns = {row["name"] for row in await cursor.fetchall()}
         await self._connection.execute("BEGIN IMMEDIATE")
         try:
             if "lineage_key" not in operation_columns:
                 await self._connection.execute("ALTER TABLE operation ADD COLUMN lineage_key TEXT")
+            if "runtime_session_id" not in operation_columns:
+                await self._connection.execute(
+                    "ALTER TABLE operation ADD COLUMN runtime_session_id TEXT"
+                )
+            if "last_source_revision" not in mapping_columns:
+                await self._connection.execute(
+                    "ALTER TABLE session_mapping ADD COLUMN last_source_revision TEXT"
+                )
+            if "last_event_epoch" not in mapping_columns:
+                await self._connection.execute(
+                    "ALTER TABLE session_mapping ADD COLUMN last_event_epoch TEXT"
+                )
+            cursor = await self._connection.execute("PRAGMA table_info(turn_event)")
+            event_columns = {row["name"] for row in await cursor.fetchall()}
+            if "connector_epoch" not in event_columns:
+                await self._connection.execute(
+                    "ALTER TABLE turn_event ADD COLUMN connector_epoch TEXT"
+                )
             await self._connection.execute(
                 """
                 UPDATE operation
@@ -153,3 +178,8 @@ class Database:
 
     async def close(self) -> None:
         await self._connection.close()
+        self._is_open = False
+
+    @property
+    def is_open(self) -> bool:
+        return self._is_open
