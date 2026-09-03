@@ -1,4 +1,4 @@
-.PHONY: bootstrap local-env test app start stop status openwebui-fetch
+.PHONY: bootstrap local-env install-plugin test app start stop status openwebui-fetch
 
 bootstrap:
 	git submodule update --init --recursive
@@ -8,6 +8,9 @@ bootstrap:
 
 local-env:
 	/bin/zsh runner/bootstrap-local-env.sh
+
+install-plugin:
+	/bin/zsh hermes-plugin/scripts/install.sh
 
 test:
 	/bin/zsh tests/test_repository_layout.sh

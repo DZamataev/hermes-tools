@@ -14,6 +14,10 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"
+[[ -f "$ROOT/hermes-plugin/package-lock.json" ]] || fail "Hermes plugin lockfile is missing"
+[[ -f "$ROOT/hermes-plugin/src/connector-core.js" ]] || fail "Hermes connector core is missing"
+[[ -f "$ROOT/hermes-plugin/src/plugin.js" ]] || fail "Hermes Desktop plugin entry is missing"
+[[ -x "$ROOT/hermes-plugin/scripts/install.sh" ]] || fail "plugin installer is missing or not executable"
 
 grep -Eq '^name:[[:space:]]+hermes$' "$ROOT/compose.yaml" ||
   fail "compose project name must remain hermes to preserve the existing volume"
@@ -23,6 +27,9 @@ grep -Eq 'OPENAI_API_KEY=[[:alnum:]]{16,}' "$ROOT/compose.yaml" &&
 
 git -C "$ROOT" check-ignore -q .env.local ||
   fail ".env.local must be ignored"
+
+git -C "$ROOT" check-ignore -q hermes-plugin/dist/plugin.js ||
+  fail "Hermes plugin build output must be ignored"
 
 grep -Eq '^OPENWEBUI_API_KEY=$' "$ROOT/.env.example" ||
   fail ".env.example must leave OPENWEBUI_API_KEY empty"
@@ -46,3 +53,23 @@ grep -Fq '/Users/frenzy/dev/hermes/hermes-tools' "$ROOT/runner/stack.sh" ||
 grep -Fq '/Users/frenzy/dev/hermes/hermes-tools/runner/stack.sh' \
   "$ROOT/runner/HermesWebUIRunner.applescript" ||
   fail "AppleScript still points outside the integration repository"
+
+grep -Fq 'hermes-plugin/scripts/install.sh' "$ROOT/Makefile" ||
+  fail "Makefile does not expose the safe plugin installer"
+
+grep -Fq '.hermes/desktop-plugins/openwebui-bridge' \
+  "$ROOT/hermes-plugin/scripts/install.sh" ||
+  fail "plugin installer does not target the standalone Desktop plugin door"
+
+if [[ -f "$ROOT/.env.local" ]]; then
+  bridge_secret="$(awk '
+    /^HERMES_BRIDGE_SECRET=/ {
+      count += 1
+      value = substr($0, length("HERMES_BRIDGE_SECRET=") + 1)
+    }
+    END { if (count == 1 && value != "") print value }
+  ' "$ROOT/.env.local")"
+  if [[ -n "$bridge_secret" ]] && git -C "$ROOT" grep -Fq -- "$bridge_secret"; then
+    fail "a tracked file contains the local Hermes bridge secret"
+  fi
+fi

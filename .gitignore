@@ -12,3 +12,5 @@ runner/runner.log
 bridge-service/data/
 bridge-service/.venv/
 __pycache__/
+hermes-plugin/dist/
+hermes-plugin/node_modules/

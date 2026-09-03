@@ -1,0 +1,13 @@
+{
+  "name": "@hermes-tools/openwebui-bridge-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/connector-core.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}
