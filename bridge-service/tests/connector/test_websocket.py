@@ -114,6 +114,20 @@ async def test_second_connector_replaces_first_and_updates_inventory():
     assert hub.routes[0].target_profile == "default"
 
 
+async def test_second_connector_fails_dispatches_owned_by_replaced_socket():
+    hub, first, second = ConnectorHub(20), FakeSocket(), FakeSocket()
+    await hub.connect(first, hello("epoch-1"))
+    pending = asyncio.create_task(anext(hub.dispatch(submit())))
+    await asyncio.sleep(0)
+
+    await hub.connect(second, hello("epoch-2"))
+
+    with pytest.raises(ConnectorDisconnected):
+        await pending
+    assert hub._pending == {}
+    assert hub.connected and hub.epoch == "epoch-2"
+
+
 async def test_dispatch_correlates_until_terminal_event():
     hub, socket = ConnectorHub(20), FakeSocket()
     await hub.connect(socket, hello())

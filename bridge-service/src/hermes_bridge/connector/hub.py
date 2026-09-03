@@ -69,14 +69,23 @@ class ConnectorHub:
 
     async def connect(self, socket: Any, hello: HelloFrame) -> None:
         old = None
+        replaced_pending = []
         async with self._lock:
             old = self._socket
+            if old is not None and old is not socket:
+                replaced_pending = list(self._pending.values())
+                self._pending.clear()
             self._socket = socket
             self._routes = tuple(hello.payload.routes)
             self._epoch = hello.id
             self._version = hello.payload.connector_version
             self._last_heartbeat = time.monotonic()
         if old is not None and old is not socket:
+            for queue in replaced_pending:
+                _put_or_replace(
+                    queue,
+                    ConnectorDisconnected("Desktop connector was replaced"),
+                )
             await old.close(code=1012, reason="replaced by newer connector")
         if self._on_connect is not None:
             self._on_connect(hello)
