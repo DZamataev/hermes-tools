@@ -312,3 +312,30 @@ async def test_event_session_must_match_accepted_runtime_session(stores):
     stored, _ = await operations.create_or_get(TurnRequest(mapping.openwebui_chat_id, "user-runtime-mismatch", "x", "x"))
     assert stored.state is OperationState.DELIVERY_UNCERTAIN
     await queue.close()
+
+
+async def test_submit_cannot_attach_after_concurrent_lineage_block_sweep(stores):
+    mappings, operations = stores
+    mapping = await _mapping(mappings, "block-race")
+    first = await _operation(operations, mapping, "first-block-race")
+    connector = ControlledConnector(); queue = LineageQueue(operations, connector, idle_timeout_seconds=60)
+    initial = asyncio.create_task(_collect(queue.submit(mapping, first)))
+    await connector.started["first-block-race"].wait(); connector.complete("first-block-race")
+    await initial
+    lineage = queue._lineages[mapping.lineage_key]
+    pending = await _operation(operations, mapping, "late-block-race")
+
+    await queue._lock.acquire()
+    try:
+        follower = asyncio.create_task(_collect(queue.submit(mapping, pending)))
+        await asyncio.sleep(0)
+        blocker = asyncio.create_task(queue._block_lineage(lineage, "reconciliation required"))
+        await asyncio.sleep(0)
+    finally:
+        queue._lock.release()
+
+    await blocker
+    with pytest.raises(DeliveryUncertain, match="reconciliation"):
+        await asyncio.wait_for(follower, 0.1)
+    assert lineage.blocked and pending.id not in lineage.jobs
+    await queue.close()

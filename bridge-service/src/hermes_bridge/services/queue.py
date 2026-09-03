@@ -111,6 +111,8 @@ class LineageQueue:
             if lineage is None:
                 lineage = _Lineage(mapping, asyncio.Queue(self._queue_size))
                 self._lineages[mapping.lineage_key] = lineage
+            elif lineage.blocked:
+                raise DeliveryUncertain("lineage is blocked pending reconciliation")
             else:
                 lineage.mapping = mapping
             job = lineage.jobs.setdefault(operation.id, _Job(operation))
