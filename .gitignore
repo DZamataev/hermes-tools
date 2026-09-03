@@ -1,0 +1,13 @@
+.DS_Store
+.superpowers/
+Hermes WebUI.app/
+runner/runner.log
+
+# Local credentials and bridge runtime state.
+.env
+.env.*
+!.env.example
+bridge-service/data/
+bridge-service/.venv/
+bridge-service/__pycache__/
+

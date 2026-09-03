@@ -1,0 +1,22 @@
+name: hermes
+
+services:
+  open-webui:
+    build:
+      context: ./open-webui
+      dockerfile: Dockerfile
+    image: hermes-open-webui:local
+    ports:
+      - "11001:8080"
+    volumes:
+      - open-webui:/app/backend/data
+    environment:
+      OPENAI_API_BASE_URL: http://host.docker.internal:8642/v1
+      OPENAI_API_KEY: ${API_SERVER_KEY:?API_SERVER_KEY is required}
+      ENABLE_OLLAMA_API: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
+volumes:
+  open-webui:
