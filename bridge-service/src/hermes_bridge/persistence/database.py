@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -85,31 +86,54 @@ class Database:
         )
         cursor = await self._connection.execute("PRAGMA table_info(operation)")
         operation_columns = {row["name"] for row in await cursor.fetchall()}
-        if "lineage_key" not in operation_columns:
-            await self._connection.execute("ALTER TABLE operation ADD COLUMN lineage_key TEXT")
-        await self._connection.execute(
-            """
-            UPDATE operation
-            SET lineage_key = (
-                SELECT connection_id || ':' || profile || ':' || lineage_root_id
-                FROM session_mapping
-                WHERE session_mapping.openwebui_chat_id = operation.chat_id
+        await self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            if "lineage_key" not in operation_columns:
+                await self._connection.execute("ALTER TABLE operation ADD COLUMN lineage_key TEXT")
+            await self._connection.execute(
+                """
+                UPDATE operation
+                SET lineage_key = (
+                    SELECT connection_id || ':' || profile || ':' || lineage_root_id
+                    FROM session_mapping
+                    WHERE session_mapping.openwebui_chat_id = operation.chat_id
+                )
+                WHERE lineage_key IS NULL
+                  AND EXISTS (
+                    SELECT 1 FROM session_mapping
+                    WHERE session_mapping.openwebui_chat_id = operation.chat_id
+                )
+                """
             )
-            WHERE lineage_key IS NULL
-              AND EXISTS (
-                SELECT 1 FROM session_mapping
-                WHERE session_mapping.openwebui_chat_id = operation.chat_id
+            await self._connection.execute("DROP INDEX IF EXISTS operation_one_active_per_lineage")
+            await self._connection.execute(
+                """
+                UPDATE operation AS later
+                SET state = ?, updated_at = ?
+                WHERE later.lineage_key IS NOT NULL
+                  AND later.state IN ('offered', 'accepted', 'streaming')
+                  AND EXISTS (
+                    SELECT 1 FROM operation AS earlier
+                    WHERE earlier.lineage_key = later.lineage_key
+                      AND earlier.state IN ('offered', 'accepted', 'streaming')
+                      AND earlier.operation_order < later.operation_order
+                  )
+                """,
+                ("delivery_uncertain", datetime.now(timezone.utc).isoformat()),
             )
-            """
-        )
-        await self._connection.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS operation_one_active_per_lineage
-            ON operation(lineage_key)
-            WHERE lineage_key IS NOT NULL
-              AND state IN ('offered', 'accepted', 'streaming', 'delivery_uncertain')
-            """
-        )
+            await self._connection.execute(
+                """
+                CREATE UNIQUE INDEX operation_one_active_per_lineage
+                ON operation(lineage_key)
+                WHERE lineage_key IS NOT NULL
+                  AND state IN ('offered', 'accepted', 'streaming')
+                """
+            )
+        except BaseException:
+            await self._connection.rollback()
+            raise
+        else:
+            await self._connection.commit()
         await self._connection.execute(
             "INSERT OR IGNORE INTO schema_version(version) VALUES (?)", (1,)
         )

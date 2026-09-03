@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import aiosqlite
 import pytest
@@ -145,6 +146,97 @@ async def test_database_rejects_two_active_operations_for_the_same_lineage(repos
                 "UPDATE operation SET lineage_key = ?, state = ? WHERE operation_id = ?",
                 (mapping.lineage_key, OperationState.ACCEPTED.value, str(second.id)),
             )
+
+
+async def test_migration_reconciles_legacy_conflicting_active_operations(tmp_path):
+    path = tmp_path / "bridge.db"
+    connection = await aiosqlite.connect(path)
+    await connection.executescript(
+        """
+        CREATE TABLE schema_version (version INTEGER PRIMARY KEY);
+        CREATE TABLE session_mapping (
+            connection_id TEXT NOT NULL,
+            profile TEXT NOT NULL,
+            lineage_root_id TEXT NOT NULL,
+            stored_session_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            openwebui_chat_id TEXT UNIQUE,
+            last_hermes_message_id TEXT,
+            last_event_seq INTEGER,
+            last_snapshot_hash TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(connection_id, profile, lineage_root_id)
+        );
+        CREATE TABLE operation (
+            operation_order INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation_id TEXT NOT NULL UNIQUE,
+            chat_id TEXT NOT NULL,
+            user_message_id TEXT NOT NULL,
+            assistant_message_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            state TEXT NOT NULL,
+            result_text TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            last_event_seq INTEGER,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(chat_id, user_message_id)
+        );
+        """
+    )
+    timestamp = datetime(2026, 9, 3, tzinfo=timezone.utc).isoformat()
+    await connection.execute(
+        """
+        INSERT INTO session_mapping (
+            connection_id, profile, lineage_root_id, stored_session_id, title,
+            openwebui_chat_id, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("local", "default", "root-1", "tip-1", "Chat", "chat-1", timestamp, timestamp),
+    )
+    for operation_id, user_message_id, state in (
+        ("00000000-0000-0000-0000-000000000001", "user-1", OperationState.OFFERED),
+        ("00000000-0000-0000-0000-000000000002", "user-2", OperationState.ACCEPTED),
+        ("00000000-0000-0000-0000-000000000003", "user-3", OperationState.STREAMING),
+    ):
+        await connection.execute(
+            """
+            INSERT INTO operation (
+                operation_id, chat_id, user_message_id, assistant_message_id, text, state,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                operation_id,
+                "chat-1",
+                user_message_id,
+                f"assistant-{user_message_id}",
+                user_message_id,
+                state.value,
+                timestamp,
+                timestamp,
+            ),
+        )
+    await connection.commit()
+    await connection.close()
+
+    database = await Database.open(path)
+    operations_repository = OperationRepository(database)
+    operations = await operations_repository.list_incomplete()
+    new_operation, _ = await operations_repository.create_or_get(
+        TurnRequest("chat-1", "user-4", "assistant-4", "new")
+    )
+    with pytest.raises(InvalidTransition):
+        await operations_repository.transition(new_operation.id, OperationState.OFFERED)
+    await database.close()
+
+    assert [operation.state for operation in operations] == [
+        OperationState.OFFERED,
+        OperationState.DELIVERY_UNCERTAIN,
+        OperationState.DELIVERY_UNCERTAIN,
+    ]
 
 
 async def test_incomplete_operations_and_pending_lineage_queue_are_recoverable(repositories):
