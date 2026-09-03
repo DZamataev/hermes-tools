@@ -22,6 +22,10 @@ grep -Eq 'OPENAI_API_KEY=[[:alnum:]]{16,}' "$ROOT/compose.yaml" &&
 grep -Fq 'context: ./open-webui' "$ROOT/compose.yaml" ||
   fail "OpenWebUI must build from the checked-out fork"
 
+grep -Eq '^ENV NODE_OPTIONS="--max-old-space-size=4096"$' \
+  "$ROOT/open-webui/Dockerfile" ||
+  fail "OpenWebUI Docker build must raise the Node heap limit to 4096 MB"
+
 [[ "$(git -C "$ROOT/open-webui" remote get-url origin)" == "git@github.com:DZamataev/open-webui.git" ]] ||
   fail "open-webui origin does not point to the requested fork"
 
