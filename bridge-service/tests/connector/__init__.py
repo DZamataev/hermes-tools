@@ -1,0 +1,1 @@
+"""Desktop connector tests."""
