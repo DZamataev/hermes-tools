@@ -11,6 +11,7 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -f "$ROOT/.env.example" ]] || fail ".env.example is missing"
 [[ -x "$ROOT/runner/stack.sh" ]] || fail "runner/stack.sh is missing or not executable"
 [[ -x "$ROOT/runner/bootstrap-local-env.sh" ]] || fail "runner/bootstrap-local-env.sh is missing or not executable"
+[[ -x "$ROOT/tests/test_bridge_stack.sh" ]] || fail "tests/test_bridge_stack.sh is missing or not executable"
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"
@@ -39,6 +40,24 @@ grep -Eq '^HERMES_BRIDGE_SECRET=$' "$ROOT/.env.example" ||
 
 grep -Fq 'context: ./open-webui' "$ROOT/compose.yaml" ||
   fail "OpenWebUI must build from the checked-out fork"
+
+grep -Eq '^[[:space:]]+bridge-service:$' "$ROOT/compose.yaml" ||
+  fail "compose.yaml must declare bridge-service"
+
+grep -Fq 'http://bridge-service:8787/v1' "$ROOT/compose.yaml" ||
+  fail "OpenWebUI must use the internal bridge endpoint"
+
+grep -Fq 'OPENAI_API_KEY: ${HERMES_BRIDGE_SECRET:' "$ROOT/compose.yaml" ||
+  fail "OpenWebUI must authenticate to the bridge with HERMES_BRIDGE_SECRET"
+
+grep -Fq '127.0.0.1:${BRIDGE_HOST_PORT:-8787}:8787' "$ROOT/compose.yaml" ||
+  fail "bridge port must bind to loopback only"
+
+grep -Eq '^[[:space:]]+bridge-data:$' "$ROOT/compose.yaml" ||
+  fail "compose.yaml must declare bridge-data"
+
+grep -Fq '/bin/zsh tests/test_bridge_stack.sh' "$ROOT/Makefile" ||
+  fail "Makefile does not expose the isolated bridge stack test"
 
 grep -Eq '^ENV NODE_OPTIONS="--max-old-space-size=4096"$' \
   "$ROOT/open-webui/Dockerfile" ||

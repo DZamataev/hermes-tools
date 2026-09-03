@@ -11,12 +11,32 @@ services:
     volumes:
       - open-webui:/app/backend/data
     environment:
-      OPENAI_API_BASE_URL: http://host.docker.internal:8642/v1
-      OPENAI_API_KEY: ${API_SERVER_KEY:?API_SERVER_KEY is required}
+      OPENAI_API_BASE_URL: http://bridge-service:8787/v1
+      OPENAI_API_KEY: ${HERMES_BRIDGE_SECRET:?HERMES_BRIDGE_SECRET is required}
       ENABLE_OLLAMA_API: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: always
+
+  bridge-service:
+    build:
+      context: ./bridge-service
+    image: hermes-openwebui-bridge:local
+    ports:
+      - "127.0.0.1:${BRIDGE_HOST_PORT:-8787}:8787"
+    environment:
+      API_SERVER_KEY: ${API_SERVER_KEY:?API_SERVER_KEY is required}
+      OPENWEBUI_API_KEY: ${OPENWEBUI_API_KEY:?OPENWEBUI_API_KEY is required}
+      HERMES_BRIDGE_SECRET: ${HERMES_BRIDGE_SECRET:?HERMES_BRIDGE_SECRET is required}
+      HERMES_BASE_URL: http://host.docker.internal:8642
+      OPENWEBUI_BASE_URL: http://open-webui:8080
+      BRIDGE_DATA_DIR: /data
+    volumes:
+      - bridge-data:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: always
 
 volumes:
   open-webui:
+  bridge-data:

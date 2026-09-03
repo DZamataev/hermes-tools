@@ -23,8 +23,12 @@ make bootstrap
 make test
 ```
 
-The runner reads `API_SERVER_KEY` from `/Users/frenzy/.hermes/.env`. Secrets
-must not be stored in this repository.
+Every runner Compose command loads `/Users/frenzy/.hermes/.env` first and the
+ignored repository `.env.local` second. The Hermes file supplies
+`API_SERVER_KEY`; `.env.local` supplies `OPENWEBUI_API_KEY` and a
+`HERMES_BRIDGE_SECRET` of at least 32 characters. Copy `.env.example` to
+`.env.local` and fill those values locally. The runner validates assignments
+with `awk` and never sources or prints either file.
 
 Build the Dock application with:
 
@@ -36,4 +40,17 @@ The OpenWebUI checkout uses your fork as `origin`. `make bootstrap` also adds
 the public project as `upstream`; `make openwebui-fetch` refreshes both remotes
 without changing the checked-out branch.
 
-Stack lifecycle shortcuts are `make start`, `make status`, and `make stop`.
+`make start` launches the forked OpenWebUI and bridge service, then waits for
+OpenWebUI health and a live compatible Hermes Desktop connector. `make status`
+reports container state separately from connector readiness. `make stop` uses
+`docker compose stop`, preserving both `hermes_open-webui` and bridge data for
+the next launch.
+
+The isolated Docker integration check is opt-in:
+
+```bash
+make bridge-stack-test
+```
+
+It uses a unique Compose project and temporary volume; it never starts or
+removes the production `hermes` project or its volumes.

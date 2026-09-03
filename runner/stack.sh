@@ -2,25 +2,57 @@
 set -euo pipefail
 
 PROJECT_DIR="${HERMES_WEBUI_PROJECT_DIR:-/Users/frenzy/dev/hermes/hermes-tools}"
-ENV_FILE="${HERMES_WEBUI_ENV_FILE:-/Users/frenzy/.hermes/.env}"
+HERMES_ENV_FILE="${HERMES_WEBUI_ENV_FILE:-/Users/frenzy/.hermes/.env}"
+LOCAL_ENV_FILE="${HERMES_WEBUI_LOCAL_ENV_FILE:-$PROJECT_DIR/.env.local}"
 COMPOSE_FILE="$PROJECT_DIR/compose.yaml"
 WEBUI_URL="${HERMES_WEBUI_URL:-http://localhost:11001}"
 RUNNER_LOG="${HERMES_WEBUI_LOG_FILE:-$PROJECT_DIR/runner/runner.log}"
 DOCKER_TIMEOUT="${HERMES_WEBUI_DOCKER_TIMEOUT:-120}"
 HEALTH_TIMEOUT="${HERMES_WEBUI_HEALTH_TIMEOUT:-120}"
+COMPOSE_ENV_ARGS=(
+  --env-file "$HERMES_ENV_FILE"
+  --env-file "$LOCAL_ENV_FILE"
+)
 
 die() { print -u2 -- "$1"; return 1; }
 
 validate_secret_source() {
-  [[ -f "$ENV_FILE" ]] || die "Hermes environment file not found: $ENV_FILE"
-  /usr/bin/awk '
-    /^API_SERVER_KEY=/ {
+  [[ -f "$HERMES_ENV_FILE" ]] || die "Hermes environment file not found: $HERMES_ENV_FILE"
+  [[ -f "$LOCAL_ENV_FILE" ]] || die "Local environment file not found: $LOCAL_ENV_FILE"
+
+  validate_assignment "$HERMES_ENV_FILE" API_SERVER_KEY 1 ||
+    die "API_SERVER_KEY is missing or empty in $HERMES_ENV_FILE"
+  validate_assignment "$LOCAL_ENV_FILE" OPENWEBUI_API_KEY 1 ||
+    die "OPENWEBUI_API_KEY is missing or empty in $LOCAL_ENV_FILE"
+  validate_assignment "$LOCAL_ENV_FILE" HERMES_BRIDGE_SECRET 32 ||
+    die "HERMES_BRIDGE_SECRET is missing or shorter than 32 characters in $LOCAL_ENV_FILE"
+
+  BRIDGE_HOST_PORT=$(/usr/bin/awk '
+    /^[[:space:]]*BRIDGE_HOST_PORT[[:space:]]*=/ {
       value = substr($0, index($0, "=") + 1)
       gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
-      if (length(value) > 0) found = 1
+      found = 1
     }
-    END { exit(found ? 0 : 1) }
-  ' "$ENV_FILE" || die "API_SERVER_KEY is missing or empty in $ENV_FILE"
+    END {
+      if (!found || value == "") value = "8787"
+      if (value !~ /^[0-9]+$/ || value < 1 || value > 65535) exit 1
+      print value
+    }
+  ' "$LOCAL_ENV_FILE") ||
+    die "BRIDGE_HOST_PORT must be an integer from 1 to 65535 in $LOCAL_ENV_FILE"
+  BRIDGE_URL="${HERMES_WEBUI_BRIDGE_URL:-http://127.0.0.1:$BRIDGE_HOST_PORT}"
+}
+
+validate_assignment() {
+  local file="$1" key="$2" minimum_length="$3"
+  /usr/bin/awk -v key="$key" -v minimum_length="$minimum_length" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]"]+|[[:space:]"]+$/, "", value)
+      found = 1
+    }
+    END { exit(found && length(value) >= minimum_length ? 0 : 1) }
+  ' "$file"
 }
 
 resolve_command() {
@@ -59,9 +91,9 @@ prepare_log() {
 
 redact_sensitive() {
   /usr/bin/sed -E \
-    -e 's/("(API_SERVER_KEY|OPENAI_API_KEY)"[[:space:]]*:[[:space:]]*")[^"]*"/\1[REDACTED]"/g' \
+    -e 's/("(API_SERVER_KEY|OPENAI_API_KEY|OPENWEBUI_API_KEY|HERMES_BRIDGE_SECRET)"[[:space:]]*:[[:space:]]*")[^"]*"/\1[REDACTED]"/g' \
     -e 's/("Authorization"[[:space:]]*:[[:space:]]*"Bearer[[:space:]]+)[^"]*"/\1[REDACTED]"/g' \
-    -e 's/(API_SERVER_KEY|OPENAI_API_KEY)([[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1\2[REDACTED]/g' \
+    -e 's/(API_SERVER_KEY|OPENAI_API_KEY|OPENWEBUI_API_KEY|HERMES_BRIDGE_SECRET)([[:space:]]*[:=][[:space:]]*)[^[:space:]]+/\1\2[REDACTED]/g' \
     -e 's/(Authorization:[[:space:]]*Bearer)[[:space:]]+[^[:space:]]+/\1 [REDACTED]/g'
 }
 
@@ -106,19 +138,20 @@ wait_for_docker() {
   die "Docker daemon did not become available within ${DOCKER_TIMEOUT} seconds."
 }
 
-wait_for_webui() {
-  local deadline remaining curl_timeout
+wait_for_url() {
+  local label="$1" url="$2" deadline remaining curl_timeout
   zmodload zsh/datetime || return 1
   deadline=$(( EPOCHREALTIME + HEALTH_TIMEOUT ))
   while (( EPOCHREALTIME < deadline )); do
     remaining=$(( deadline - EPOCHREALTIME ))
     curl_timeout=2
     (( remaining < curl_timeout )) && curl_timeout=$remaining
-    "$CURL_BIN" --fail --silent --show-error --max-time "$curl_timeout" "$WEBUI_URL/health" && return 0
+    "$CURL_BIN" --fail --silent --show-error --output /dev/null \
+      --max-time "$curl_timeout" "$url" && return 0
     (( EPOCHREALTIME >= deadline )) && break
     "$SLEEP_BIN" 1
   done
-  die "Hermes WebUI did not become healthy within ${HEALTH_TIMEOUT} seconds."
+  die "$label did not become ready within ${HEALTH_TIMEOUT} seconds."
 }
 
 start_stack() {
@@ -126,8 +159,9 @@ start_stack() {
   initialize_commands
   prepare_log
   wait_for_docker
-  run_logged compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
-  wait_for_webui
+  run_logged compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" up -d --remove-orphans
+  wait_for_url "Hermes WebUI" "$WEBUI_URL/health"
+  wait_for_url "Hermes bridge (including a replay_complete Desktop connector)" "$BRIDGE_URL/health/ready"
 }
 
 stop_stack() {
@@ -136,7 +170,7 @@ stop_stack() {
   prepare_log
   "$DOCKER_BIN" info >/dev/null 2>&1 ||
     die "Docker daemon is not available; the Hermes WebUI stack could not be stopped."
-  run_logged compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" stop
+  run_logged compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" stop
 }
 
 status_stack() {
@@ -146,13 +180,18 @@ status_stack() {
   prepare_log
   "$DOCKER_BIN" info >/dev/null 2>&1 ||
     die "Docker daemon is not available; the Hermes WebUI stack status could not be checked."
-  declared=$(run_logged compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" config --services) || return 1
-  running=$(run_logged compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps --services --status running) || return 1
+  declared=$(run_logged compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" config --services) || return 1
+  running=$(run_logged compose "${COMPOSE_ENV_ARGS[@]}" -f "$COMPOSE_FILE" ps --services --status running) || return 1
   declared_sorted=$(print -r -- "$declared" | /usr/bin/sed '/^[[:space:]]*$/d' | /usr/bin/sort -u)
   running_sorted=$(print -r -- "$running" | /usr/bin/sed '/^[[:space:]]*$/d' | /usr/bin/sort -u)
   [[ -n "$declared_sorted" ]] || die "Docker Compose declared no services."
   [[ "$declared_sorted" == "$running_sorted" ]] ||
-    die "Hermes WebUI stack is not fully running."
+    die "Hermes WebUI stack containers are not fully running."
+  print -r -- "Containers: running"
+  "$CURL_BIN" --fail --silent --show-error --output /dev/null --max-time 2 \
+    "$BRIDGE_URL/health/ready" ||
+    die "Bridge: not connector-ready (start Hermes Desktop with the replay_complete connector)."
+  print -r -- "Bridge: connector-ready"
 }
 
 usage() {

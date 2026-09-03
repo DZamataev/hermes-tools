@@ -1,4 +1,4 @@
-.PHONY: bootstrap local-env install-plugin test app start stop status openwebui-fetch
+.PHONY: bootstrap local-env install-plugin test bridge-stack-test app start stop status openwebui-fetch
 
 bootstrap:
 	git submodule update --init --recursive
@@ -15,6 +15,9 @@ install-plugin:
 test:
 	/bin/zsh tests/test_repository_layout.sh
 	/bin/zsh runner/tests/test_stack.sh
+
+bridge-stack-test:
+	/bin/zsh tests/test_bridge_stack.sh
 
 app:
 	/bin/zsh runner/build-app.sh

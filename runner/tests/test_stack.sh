@@ -10,6 +10,9 @@ trap 'rm -rf "$TEST_TMP"' EXIT
 fail() { print -u2 -- "FAIL: $*"; exit 1; }
 assert_contains() { [[ "$1" == *"$2"* ]] || fail "expected <$2> in <$1>"; }
 assert_not_contains() { [[ "$1" != *"$2"* ]] || fail "unexpected <$2> in <$1>"; }
+assert_before() {
+  [[ "$1" == *"$2"*"$3"* ]] || fail "expected <$2> before <$3> in <$1>"
+}
 
 grep -Eq 'OPENAI_API_KEY=[[:alnum:]]{16,}' "$ROOT/compose.yaml" &&
   fail "compose.yaml contains a literal API key"
@@ -17,6 +20,7 @@ grep -Eq 'OPENAI_API_KEY=[[:alnum:]]{16,}' "$ROOT/compose.yaml" &&
 mkdir -p "$TEST_TMP/project"
 cp "$ROOT/compose.yaml" "$TEST_TMP/project/compose.yaml"
 : > "$TEST_TMP/empty.env"
+: > "$TEST_TMP/project/.env.local"
 
 set +e
 output=$(HERMES_WEBUI_PROJECT_DIR="$TEST_TMP/project" \
@@ -56,20 +60,24 @@ if [[ "$1" == "info" ]]; then
   exit $?
 fi
 if [[ "$*" == *"config --services"* ]]; then
-  print -r -- "${FAKE_DECLARED_SERVICES:-open-webui}"
+  print -r -- "${FAKE_DECLARED_SERVICES:-$'open-webui\nbridge-service'}"
   exit 0
 fi
 if [[ "$*" == *"ps --services --status running"* ]]; then
-  print -r -- "${FAKE_RUNNING_SERVICES:-open-webui}"
+  print -r -- "${FAKE_RUNNING_SERVICES:-$'open-webui\nbridge-service'}"
   exit 0
 fi
 if [[ "$*" == *"up -d --remove-orphans"* && -n "${FAKE_COMPOSE_EXIT:-}" ]]; then
   print -r -- "OPENAI_API_KEY=$TEST_SECRET"
   print -r -- "OPENAI_API_KEY: $TEST_SECRET"
   print -r -- "API_SERVER_KEY: $TEST_SECRET"
+  print -r -- "OPENWEBUI_API_KEY: $TEST_OPENWEBUI_SECRET"
+  print -r -- "HERMES_BRIDGE_SECRET: $TEST_BRIDGE_SECRET"
   print -r -- "Authorization: Bearer $TEST_SECRET"
   print -r -- "{\"OPENAI_API_KEY\": \"$TEST_SECRET\"}"
   print -r -- "{\"API_SERVER_KEY\": \"$TEST_SECRET\"}"
+  print -r -- "{\"OPENWEBUI_API_KEY\": \"$TEST_OPENWEBUI_SECRET\"}"
+  print -r -- "{\"HERMES_BRIDGE_SECRET\": \"$TEST_BRIDGE_SECRET\"}"
   print -r -- "{\"Authorization\": \"Bearer $TEST_SECRET\"}"
   exit "$FAKE_COMPOSE_EXIT"
 fi
@@ -96,14 +104,22 @@ exit 0
 FAKE_SLEEP
 chmod +x "$TEST_TMP/bin/"*
 
-TEST_SECRET="test-secret-never-log"
-export TEST_SECRET
+TEST_SECRET="test-api-secret-never-log"
+TEST_OPENWEBUI_SECRET="test-openwebui-secret-never-log"
+TEST_BRIDGE_SECRET="test-bridge-secret-that-is-at-least-32-chars-never-log"
+export TEST_SECRET TEST_OPENWEBUI_SECRET TEST_BRIDGE_SECRET
 print -r -- "API_SERVER_KEY=$TEST_SECRET" > "$TEST_TMP/hermes.env"
+{
+  print -r -- "OPENWEBUI_API_KEY=$TEST_OPENWEBUI_SECRET"
+  print -r -- "HERMES_BRIDGE_SECRET=$TEST_BRIDGE_SECRET"
+  print -r -- "BRIDGE_HOST_PORT=18787"
+} > "$TEST_TMP/project/.env.local"
 FAKE_CALLS="$TEST_TMP/calls"
 FAKE_DOCKER_COUNTER="$TEST_TMP/docker-counter"
 export FAKE_CALLS FAKE_DOCKER_COUNTER
 export HERMES_WEBUI_PROJECT_DIR="$TEST_TMP/project"
 export HERMES_WEBUI_ENV_FILE="$TEST_TMP/hermes.env"
+export HERMES_WEBUI_LOCAL_ENV_FILE="$TEST_TMP/project/.env.local"
 export HERMES_WEBUI_DOCKER_BIN="$TEST_TMP/bin/docker"
 export HERMES_WEBUI_OPEN_BIN="$TEST_TMP/bin/open"
 export HERMES_WEBUI_CURL_BIN="$TEST_TMP/bin/curl"
@@ -119,19 +135,25 @@ export FAKE_DOCKER_INFO_FAILURES=1
   fail "start should succeed with fake commands"
 start_calls=$(<"$FAKE_CALLS")
 assert_contains "$start_calls" "-a Docker"
-assert_contains "$start_calls" "compose --env-file $TEST_TMP/hermes.env -f $TEST_TMP/project/compose.yaml up -d --remove-orphans"
-assert_contains "$start_calls" "--fail --silent --show-error --max-time "
+compose_prefix="compose --env-file $TEST_TMP/hermes.env --env-file $TEST_TMP/project/.env.local -f $TEST_TMP/project/compose.yaml"
+assert_contains "$start_calls" "$compose_prefix up -d --remove-orphans"
+assert_before "$start_calls" "$TEST_TMP/hermes.env" "$TEST_TMP/project/.env.local"
+assert_contains "$start_calls" "--fail --silent --show-error --output /dev/null --max-time "
 assert_contains "$start_calls" "http://localhost:11001/health"
-assert_not_contains "$(<"$TEST_TMP/start.stdout")" "$TEST_SECRET"
-assert_not_contains "$(<"$TEST_TMP/start.stderr")" "$TEST_SECRET"
-assert_not_contains "$(<"$TEST_TMP/runner.log")" "$TEST_SECRET"
+assert_contains "$start_calls" "http://127.0.0.1:18787/health/ready"
+for secret in "$TEST_SECRET" "$TEST_OPENWEBUI_SECRET" "$TEST_BRIDGE_SECRET"; do
+  assert_not_contains "$(<"$TEST_TMP/start.stdout")" "$secret"
+  assert_not_contains "$(<"$TEST_TMP/start.stderr")" "$secret"
+  assert_not_contains "$(<"$TEST_TMP/runner.log")" "$secret"
+done
 
 : > "$FAKE_CALLS"
 export FAKE_DOCKER_INFO_FAILURES=0
 "$STACK" stop >"$TEST_TMP/stop.stdout" 2>"$TEST_TMP/stop.stderr" ||
   fail "stop should succeed with fake commands"
 stop_calls=$(<"$FAKE_CALLS")
-assert_contains "$stop_calls" "compose --env-file $TEST_TMP/hermes.env -f $TEST_TMP/project/compose.yaml stop"
+assert_contains "$stop_calls" "$compose_prefix stop"
+assert_before "$stop_calls" "$TEST_TMP/hermes.env" "$TEST_TMP/project/.env.local"
 assert_not_contains "$stop_calls" " down"
 assert_not_contains "$stop_calls" " rm"
 assert_not_contains "$stop_calls" "--volumes"
@@ -140,20 +162,36 @@ assert_not_contains "$(<"$TEST_TMP/stop.stderr")" "$TEST_SECRET"
 assert_not_contains "$(<"$TEST_TMP/runner.log")" "$TEST_SECRET"
 
 : > "$FAKE_CALLS"
-export FAKE_DECLARED_SERVICES=$'open-webui\nbridge'
+export FAKE_DECLARED_SERVICES=$'open-webui\nbridge-service'
 export FAKE_RUNNING_SERVICES="open-webui"
 set +e
 "$STACK" status >"$TEST_TMP/status.stdout" 2>"$TEST_TMP/status.stderr"
 code=$?
 set -e
 [[ $code -ne 0 ]] || fail "status must fail when a declared service is not running"
+status_calls=$(<"$FAKE_CALLS")
+assert_contains "$status_calls" "$compose_prefix config --services"
+assert_contains "$status_calls" "$compose_prefix ps --services --status running"
+assert_before "$status_calls" "$TEST_TMP/hermes.env" "$TEST_TMP/project/.env.local"
 assert_not_contains "$(<"$TEST_TMP/status.stdout")" "$TEST_SECRET"
 assert_not_contains "$(<"$TEST_TMP/status.stderr")" "$TEST_SECRET"
 assert_not_contains "$(<"$TEST_TMP/runner.log")" "$TEST_SECRET"
 
+: > "$FAKE_CALLS"
+export FAKE_DECLARED_SERVICES=$'open-webui\nbridge-service'
+export FAKE_RUNNING_SERVICES=$'open-webui\nbridge-service'
+export FAKE_CURL_EXIT=22
+set +e
+"$STACK" status >"$TEST_TMP/not-ready.stdout" 2>"$TEST_TMP/not-ready.stderr"
+code=$?
+set -e
+unset FAKE_CURL_EXIT
+[[ $code -ne 0 ]] || fail "status must fail when containers run but connector is not ready"
+assert_contains "$(<"$TEST_TMP/not-ready.stdout")" "Containers: running"
+assert_contains "$(<"$TEST_TMP/not-ready.stderr")" "connector-ready"
+assert_contains "$(<"$FAKE_CALLS")" "http://127.0.0.1:18787/health/ready"
+
 : > "$TEST_TMP/runner.log"
-export FAKE_DECLARED_SERVICES="open-webui"
-export FAKE_RUNNING_SERVICES="open-webui"
 export FAKE_COMPOSE_EXIT=42
 set +e
 "$STACK" start >"$TEST_TMP/failed-start.stdout" 2>"$TEST_TMP/failed-start.stderr"
@@ -163,9 +201,11 @@ unset FAKE_COMPOSE_EXIT
 [[ $code -eq 42 ]] || fail "start must preserve a failed compose exit code"
 failed_log=$(<"$TEST_TMP/runner.log")
 assert_contains "$failed_log" "[REDACTED]"
-assert_not_contains "$failed_log" "$TEST_SECRET"
-assert_not_contains "$(<"$TEST_TMP/failed-start.stdout")" "$TEST_SECRET"
-assert_not_contains "$(<"$TEST_TMP/failed-start.stderr")" "$TEST_SECRET"
+for secret in "$TEST_SECRET" "$TEST_OPENWEBUI_SECRET" "$TEST_BRIDGE_SECRET"; do
+  assert_not_contains "$failed_log" "$secret"
+  assert_not_contains "$(<"$TEST_TMP/failed-start.stdout")" "$secret"
+  assert_not_contains "$(<"$TEST_TMP/failed-start.stderr")" "$secret"
+done
 
 : > "$FAKE_CALLS"
 export HERMES_WEBUI_HEALTH_TIMEOUT=1
