@@ -123,6 +123,29 @@ class MappingRepository:
         row = await self._fetch_mapping_by_lineage(self._database.connection, lineage_key)
         return _mapping(row) if row is not None else None
 
+    async def update_snapshot(
+        self,
+        lineage_key: str,
+        *,
+        last_hermes_message_id: str | None,
+        snapshot_hash: str,
+    ) -> SessionMapping:
+        now = _timestamp(utc_now())
+        async with self._database.write_transaction() as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE session_mapping
+                SET last_hermes_message_id = ?, last_snapshot_hash = ?, updated_at = ?
+                WHERE connection_id || ':' || profile || ':' || lineage_root_id = ?
+                """,
+                (last_hermes_message_id, snapshot_hash, now, lineage_key),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"no session mapping for lineage {lineage_key}")
+            row = await self._fetch_mapping_by_lineage(connection, lineage_key)
+        assert row is not None
+        return _mapping(row)
+
     @staticmethod
     async def _fetch_mapping_by_lineage(
         connection: aiosqlite.Connection, lineage_key: str

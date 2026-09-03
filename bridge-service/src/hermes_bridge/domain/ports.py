@@ -22,6 +22,16 @@ class MappingStore(Protocol):
 
     async def by_chat_id(self, chat_id: str) -> SessionMapping | None: ...
 
+    async def by_lineage_key(self, lineage_key: str) -> SessionMapping | None: ...
+
+    async def update_snapshot(
+        self,
+        lineage_key: str,
+        *,
+        last_hermes_message_id: str | None,
+        snapshot_hash: str,
+    ) -> SessionMapping: ...
+
 
 class OperationStore(Protocol):
     async def create_or_get(self, request: TurnRequest) -> tuple[Operation, bool]: ...
