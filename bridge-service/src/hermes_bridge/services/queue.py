@@ -13,7 +13,9 @@ from hermes_bridge.connector.hub import ConnectorDisconnected, ConnectorOffline
 from hermes_bridge.connector.protocol import (
     AcceptedFrame, CommandErrorFrame, HermesEventFrame, ProfileRoute, SubmitFrame,
 )
-from hermes_bridge.domain.models import Operation, OperationState, SessionMapping, TurnEvent
+from hermes_bridge.domain.models import (
+    InvalidTransition, Operation, OperationState, SessionMapping, TurnEvent,
+)
 from hermes_bridge.domain.ports import OperationStore
 
 
@@ -113,7 +115,8 @@ class LineageQueue:
                 lineage.mapping = mapping
             job = lineage.jobs.setdefault(operation.id, _Job(operation))
             self._attach(job, follower)
-            if lineage.worker is None or lineage.worker.done():
+            if (lineage.worker is None or lineage.worker.done()
+                    or lineage.worker.cancelling()):
                 lineage.worker = asyncio.create_task(self._run(mapping.lineage_key, lineage))
             try:
                 lineage.wake.put_nowait(None)
@@ -161,7 +164,13 @@ class LineageQueue:
             raise
         finally:
             async with self._lock:
-                if self._lineages.get(lineage_key) is lineage and not lineage.blocked and lineage.wake.empty():
+                current = asyncio.current_task()
+                if self._lineages.get(lineage_key) is not lineage or lineage.worker is not current:
+                    return
+                lineage.worker = None
+                if not self._closed and not lineage.blocked and not lineage.wake.empty():
+                    lineage.worker = asyncio.create_task(self._run(lineage_key, lineage))
+                elif not lineage.blocked and lineage.wake.empty():
                     self._lineages.pop(lineage_key, None)
 
     async def _process(self, lineage: _Lineage, job: _Job) -> None:
@@ -180,7 +189,11 @@ class LineageQueue:
             await self._finish(job, OperationRejected("Hermes Desktop route is unavailable"))
             return
 
-        job.operation = await self._operations.transition(operation.id, OperationState.OFFERED)
+        try:
+            job.operation = await self._operations.transition(operation.id, OperationState.OFFERED)
+        except InvalidTransition:
+            await self._block_lineage(lineage, "lineage is blocked pending reconciliation")
+            return
         command = SubmitFrame.model_validate({
             "protocol": 1, "kind": "submit", "id": str(uuid4()),
             "correlation_id": str(operation.id), "sent_at": datetime.now(timezone.utc),
@@ -189,6 +202,7 @@ class LineageQueue:
                         "text": operation.text, "queued": True},
         })
         accepted = False
+        runtime_session_id: str | None = None
         terminal = False
         deltas: list[str] = []
         try:
@@ -197,6 +211,7 @@ class LineageQueue:
                     self._validate_operation(frame.payload.operation_id, operation.id)
                     job.operation = await self._operations.transition(operation.id, OperationState.ACCEPTED)
                     accepted = True
+                    runtime_session_id = frame.payload.runtime_session_id
                 elif isinstance(frame, CommandErrorFrame):
                     self._validate_operation(frame.payload.operation_id, operation.id)
                     if frame.payload.acceptance_unknown:
@@ -207,7 +222,7 @@ class LineageQueue:
                     await self._finish(job, OperationRejected(frame.payload.message))
                     terminal = True
                 elif isinstance(frame, HermesEventFrame):
-                    self._validate_event(frame, operation, lineage.mapping)
+                    self._validate_event(frame, operation, lineage.mapping, runtime_session_id)
                     kind = frame.payload.event_type
                     if kind == "message.delta":
                         if not accepted:
@@ -252,13 +267,11 @@ class LineageQueue:
         except (ConnectorOffline, ConnectorDisconnected, DeliveryUncertain) as error:
             if job.operation.state not in {OperationState.DELIVERY_UNCERTAIN, OperationState.COMPLETED, OperationState.REJECTED}:
                 job.operation = await self._mark_uncertain(job.operation, "connector_disconnected", str(error))
-            lineage.blocked = True
-            await self._finish(job, DeliveryUncertain(str(error)))
+            await self._block_lineage(lineage, str(error))
         except Exception as error:
             if job.operation.state not in {OperationState.DELIVERY_UNCERTAIN, OperationState.COMPLETED, OperationState.REJECTED}:
                 job.operation = await self._mark_uncertain(job.operation, "protocol_error", "connector response was invalid")
-            lineage.blocked = True
-            await self._finish(job, DeliveryUncertain("connector response was invalid"))
+            await self._block_lineage(lineage, "connector response was invalid")
 
     async def _publish(self, job: _Job, event: TurnEvent) -> None:
         async with self._lock:
@@ -275,6 +288,17 @@ class LineageQueue:
             job.terminal = terminal
             for follower in tuple(job.followers):
                 self._offer(job, follower, terminal)
+
+    async def _block_lineage(self, lineage: _Lineage, message: str) -> None:
+        async with self._lock:
+            lineage.blocked = True
+            for pending_job in lineage.jobs.values():
+                if pending_job.terminal is not None:
+                    continue
+                terminal = DeliveryUncertain(message)
+                pending_job.terminal = terminal
+                for follower in tuple(pending_job.followers):
+                    self._offer(pending_job, follower, terminal)
 
     @staticmethod
     def _offer(job: _Job, follower: asyncio.Queue[Any], item: Any) -> None:
@@ -303,10 +327,13 @@ class LineageQueue:
         if value != str(expected): raise ValueError("operation correlation mismatch")
 
     @staticmethod
-    def _validate_event(frame: HermesEventFrame, operation: Operation, mapping: SessionMapping) -> None:
+    def _validate_event(frame: HermesEventFrame, operation: Operation, mapping: SessionMapping,
+                        runtime_session_id: str | None) -> None:
         if frame.payload.operation_id != str(operation.id): raise ValueError("operation correlation mismatch")
         if frame.payload.connection_id != mapping.connection_id or frame.payload.profile != mapping.profile:
             raise ValueError("event route mismatch")
+        if runtime_session_id is None or frame.payload.session_id != runtime_session_id:
+            raise ValueError("event runtime session mismatch")
 
     @staticmethod
     def _text(data: dict[str, Any]) -> str:

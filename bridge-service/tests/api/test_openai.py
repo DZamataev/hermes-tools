@@ -145,3 +145,26 @@ async def test_create_app_wires_openai_dependencies_and_closes_them(settings):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/v1/models", headers={"Authorization": f"Bearer {settings.bridge_secret}"})
         assert response.status_code == 200
+
+
+@pytest.mark.parametrize("unsupported", [
+    {"functions": [{"name": "legacy"}]},
+    {"function_call": "auto"},
+    {"modalities": ["text", "audio"]},
+    {"audio": {"voice": "alloy", "format": "wav"}},
+    {"messages": [{"role": "user", "content": "hello", "files": [{"id": "file-1"}]}]},
+    {"messages": [{"role": "user", "content": "hello", "attachments": [{"id": "file-1"}]}]},
+    {"messages": [{"role": "alien", "content": "ignored"}, {"role": "user", "content": "hello"}]},
+    {"messages": [{"role": "user", "content": [{"type": "text", "text": "hello", "image_url": {"url": "x"}}]}]},
+])
+async def test_text_only_parser_fails_closed_for_unsupported_capabilities(api, unsupported):
+    body = request_body()
+    body.update(unsupported)
+    response = await api[0].post("/v1/chat/completions", headers={**HEADERS, "X-Hermes-User-Message-Id": str(unsupported)}, json=body)
+    assert response.status_code == 400 and response.json()["error"]["code"] == "invalid_request"
+
+
+async def test_standard_openwebui_text_sampling_fields_remain_supported(api):
+    body = request_body(temperature=0.7, top_p=0.9, max_tokens=200, stream_options={"include_usage": True})
+    response = await api[0].post("/v1/chat/completions", headers={**HEADERS, "X-Hermes-User-Message-Id": "sampling"}, json=body)
+    assert response.status_code == 200 and "data: [DONE]" in response.text

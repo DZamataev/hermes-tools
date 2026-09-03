@@ -34,16 +34,24 @@ def _text_request(body: object) -> tuple[str | None, str | None]:
     if not isinstance(body, dict): return None, "request body must be an object"
     if body.get("model") != "hermes-live": return None, "model must be hermes-live"
     if body.get("stream") is not True: return None, "stream must be true"
-    if "tools" in body or "tool_choice" in body: return None, "tools are not supported"
+    unsupported_top_level = {
+        "audio", "attachments", "files", "function_call", "functions", "images",
+        "modalities", "parallel_tool_calls", "response_format", "tool_choice", "tools",
+    }
+    if unsupported_top_level.intersection(body):
+        return None, "tools, files, and non-text output are not supported"
     messages = body.get("messages")
     if not isinstance(messages, list) or not messages: return None, "messages must be a non-empty array"
     for message in messages:
         if not isinstance(message, dict): return None, "every message must be an object"
-        if message.get("role") in {"tool", "function"} or "tool_calls" in message or "function_call" in message:
+        if message.get("role") not in {"assistant", "developer", "system", "user"}:
+            return None, "unsupported message role"
+        if {"attachments", "audio", "files", "images", "tool_calls", "function_call"}.intersection(message):
             return None, "tool messages are not supported"
         content = message.get("content")
         if isinstance(content, list):
-            if any(not isinstance(part, dict) or part.get("type") not in {"text", "input_text"}
+            if any(not isinstance(part, dict) or set(part) != {"type", "text"}
+                   or part.get("type") not in {"text", "input_text"}
                    or not isinstance(part.get("text"), str) for part in content):
                 return None, "only text content is supported"
         elif content is not None and not isinstance(content, str):

@@ -233,3 +233,82 @@ async def test_error_status_on_message_complete_is_terminal_failure(stores):
     stored, _ = await operations.create_or_get(TurnRequest(mapping.openwebui_chat_id, "user-failed", "x", "x"))
     assert stored.state is OperationState.COMPLETED and stored.error_code == "hermes_error"
     await queue.close()
+
+
+@pytest.mark.parametrize("predecessor_state", [
+    OperationState.OFFERED, OperationState.ACCEPTED,
+    OperationState.STREAMING, OperationState.DELIVERY_UNCERTAIN,
+])
+async def test_persisted_active_predecessor_fails_later_pending_without_hanging(stores, predecessor_state):
+    mappings, operations = stores
+    mapping = await _mapping(mappings, f"restart-{predecessor_state}")
+    predecessor = await _operation(operations, mapping, "predecessor")
+    predecessor = await operations.transition(predecessor.id, OperationState.OFFERED)
+    if predecessor_state in {OperationState.ACCEPTED, OperationState.STREAMING}:
+        predecessor = await operations.transition(predecessor.id, OperationState.ACCEPTED)
+    if predecessor_state is OperationState.STREAMING:
+        predecessor = await operations.transition(predecessor.id, OperationState.STREAMING)
+    if predecessor_state is OperationState.DELIVERY_UNCERTAIN:
+        predecessor = await operations.transition(predecessor.id, OperationState.DELIVERY_UNCERTAIN)
+    pending = await _operation(operations, mapping, "later")
+    another = await _operation(operations, mapping, "another-later")
+    connector = ControlledConnector(); queue = LineageQueue(operations, connector)
+    followers = [asyncio.create_task(_collect(queue.submit(mapping, item))) for item in (pending, another)]
+    results = await asyncio.wait_for(asyncio.gather(*followers, return_exceptions=True), 0.1)
+    assert all(isinstance(result, DeliveryUncertain) for result in results)
+    assert not connector.started["later"].is_set()
+    await queue.close()
+
+
+async def test_submit_racing_cancelled_idle_worker_gets_replacement(stores):
+    mappings, operations = stores
+    mapping = await _mapping(mappings, "teardown-race")
+    first = await _operation(operations, mapping, "first-race")
+    connector = ControlledConnector(); queue = LineageQueue(operations, connector, idle_timeout_seconds=60)
+    initial = asyncio.create_task(_collect(queue.submit(mapping, first)))
+    await connector.started["first-race"].wait(); connector.complete("first-race")
+    await initial
+    lineage = queue._lineages[mapping.lineage_key]
+    second = await _operation(operations, mapping, "second-race")
+    lineage.worker.cancel(); await asyncio.gather(lineage.worker, return_exceptions=True)
+    tearing_down, release = asyncio.Event(), asyncio.Event()
+
+    async def cancelling_worker():
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            tearing_down.set()
+            await release.wait()
+
+    lineage.worker = asyncio.create_task(cancelling_worker())
+    queue._lineages[mapping.lineage_key] = lineage
+    await asyncio.sleep(0)
+    lineage.worker.cancel(); await tearing_down.wait()
+    follower = asyncio.create_task(_collect(queue.submit(mapping, second)))
+    try:
+        await asyncio.wait_for(connector.started["second-race"].wait(), 0.1)
+        connector.complete("second-race")
+        assert (await asyncio.wait_for(follower, 0.2))[-1].text == "second-race"
+    finally:
+        release.set()
+        follower.cancel(); await asyncio.gather(follower, return_exceptions=True)
+    await queue.close()
+
+
+async def test_event_session_must_match_accepted_runtime_session(stores):
+    class WrongRuntimeConnector(ControlledConnector):
+        async def dispatch(self, command):
+            yield _frame("accepted", command.correlation_id, command.payload.operation_id)
+            event = _frame("hermes_event", command.correlation_id, command.payload.operation_id,
+                           event_type="message.complete", text="wrong")
+            yield event.model_copy(update={"payload": event.payload.model_copy(update={"session_id": "another-runtime"})})
+
+    mappings, operations = stores
+    mapping = await _mapping(mappings, "runtime-mismatch")
+    operation = await _operation(operations, mapping, "runtime-mismatch")
+    queue = LineageQueue(operations, WrongRuntimeConnector())
+    with pytest.raises(DeliveryUncertain):
+        await _collect(queue.submit(mapping, operation))
+    stored, _ = await operations.create_or_get(TurnRequest(mapping.openwebui_chat_id, "user-runtime-mismatch", "x", "x"))
+    assert stored.state is OperationState.DELIVERY_UNCERTAIN
+    await queue.close()
