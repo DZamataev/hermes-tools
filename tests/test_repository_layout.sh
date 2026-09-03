@@ -12,6 +12,9 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -x "$ROOT/runner/stack.sh" ]] || fail "runner/stack.sh is missing or not executable"
 [[ -x "$ROOT/runner/bootstrap-local-env.sh" ]] || fail "runner/bootstrap-local-env.sh is missing or not executable"
 [[ -x "$ROOT/tests/test_bridge_stack.sh" ]] || fail "tests/test_bridge_stack.sh is missing or not executable"
+[[ -f "$ROOT/tests/contract/test_openwebui_live.py" ]] || fail "OpenWebUI contract test is missing"
+[[ -x "$ROOT/tests/fakes/fake_desktop_connector.py" ]] || fail "fake Desktop connector is missing or not executable"
+[[ -f "$ROOT/docs/openwebui-bridge-setup.md" ]] || fail "bridge setup guide is missing"
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"
@@ -58,6 +61,9 @@ grep -Eq '^[[:space:]]+bridge-data:$' "$ROOT/compose.yaml" ||
 
 grep -Fq '/bin/zsh tests/test_bridge_stack.sh' "$ROOT/Makefile" ||
   fail "Makefile does not expose the isolated bridge stack test"
+
+grep -Fq 'tests/contract/test_openwebui_live.py' "$ROOT/Makefile" ||
+  fail "Makefile does not expose the OpenWebUI contract test"
 
 grep -Eq '^ENV NODE_OPTIONS="--max-old-space-size=4096"$' \
   "$ROOT/open-webui/Dockerfile" ||

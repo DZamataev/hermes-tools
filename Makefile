@@ -1,4 +1,4 @@
-.PHONY: bootstrap local-env install-plugin test bridge-stack-test app start stop status openwebui-fetch
+.PHONY: bootstrap local-env install-plugin test bridge-stack-test contract-test app start stop status openwebui-fetch
 
 bootstrap:
 	git submodule update --init --recursive
@@ -18,6 +18,9 @@ test:
 
 bridge-stack-test:
 	/bin/zsh tests/test_bridge_stack.sh
+
+contract-test:
+	cd bridge-service && uv run --python 3.12 --extra test pytest ../tests/contract/test_openwebui_live.py -q -rs
 
 app:
 	/bin/zsh runner/build-app.sh

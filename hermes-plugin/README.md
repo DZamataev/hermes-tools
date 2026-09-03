@@ -30,3 +30,9 @@ Hermes Desktop watches the standalone plugin folder and normally hot-loads the
 file within five seconds. If it does not, run **Reload desktop plugins** from
 the Hermes command palette and confirm **OpenWebUI Bridge** is loaded under
 Settings → Plugins.
+
+Connector 1.1.0 advertises the required `replay_complete` capability. The
+bridge rejects older installed connectors instead of attempting ambiguous
+recovery. If `/health/ready` reports the Desktop connector unavailable after an
+upgrade, run `make install-plugin`, then reload Desktop plugins or restart
+Hermes Desktop.

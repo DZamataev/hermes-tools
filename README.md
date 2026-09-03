@@ -26,8 +26,8 @@ make test
 Every runner Compose command loads `/Users/frenzy/.hermes/.env` first and the
 ignored repository `.env.local` second. The Hermes file supplies
 `API_SERVER_KEY`; `.env.local` supplies `OPENWEBUI_API_KEY` and a
-`HERMES_BRIDGE_SECRET` of at least 32 characters. Copy `.env.example` to
-`.env.local` and fill those values locally. The runner validates assignments
+`HERMES_BRIDGE_SECRET` of at least 32 characters. Run `make local-env` to create
+or repair `.env.local`, then fill the OpenWebUI key locally. The runner validates assignments
 with `awk` and never sources or prints either file.
 
 Build the Dock application with:
@@ -54,3 +54,8 @@ make bridge-stack-test
 
 It uses a unique Compose project and temporary volume; it never starts or
 removes the production `hermes` project or its volumes.
+
+The complete one-time OpenWebUI setup, manual acceptance sequence, and recovery
+instructions are in [`docs/openwebui-bridge-setup.md`](docs/openwebui-bridge-setup.md).
+After creating the first administrator's OpenWebUI API key, verify the pinned
+server contract with `make contract-test`.
