@@ -88,6 +88,7 @@ flowchart LR
 
     subgraph Host["macOS host"]
         Plugin["External Hermes Desktop plugin<br/>~/.hermes/desktop-plugins/openwebui-bridge"]
+        HermesRead["Hermes API server :8642<br/>Session inventory and stored history"]
         Gateway["Existing Desktop gateway connection"]
         Runtime["Hermes agent runtime"]
         HermesData[("Hermes session store<br/>Authoritative")]
@@ -100,7 +101,8 @@ flowchart LR
     User --> Web
     Plugin -->|Outbound localhost WebSocket| Bridge
     Bridge -->|Queued session command| Plugin
-    Plugin -->|Session inventory, snapshots, and events| Bridge
+    Plugin -->|Profile routes and live events| Bridge
+    Bridge -->|Authenticated read-only session API| HermesRead
 ```
 
 Only the Desktop connector endpoint is published to `127.0.0.1`; OpenWebUI uses the bridge over the private Compose network. The existing OpenWebUI port remains `11001`.
@@ -116,6 +118,7 @@ flowchart TB
     Coordinator["Per-lineage queue coordinator"]
     Translator["Hermes event to OpenAI SSE translator"]
     OWClient["OpenWebUI API client"]
+    HermesClient["Hermes read API client"]
     Store["Repository layer"]
     DB[("SQLite durable store")]
 
@@ -123,7 +126,7 @@ flowchart TB
     Coordinator <--> Connector
     Connector --> Translator
     Translator --> OpenAI
-    Connector --> Discovery
+    HermesClient --> Discovery
     Discovery --> Reconciler
     Translator --> Reconciler
     Reconciler --> OWClient
@@ -161,7 +164,7 @@ Maintains a FIFO queue per Hermes lineage. Different lineages may execute concur
 
 ### Discovery and reconciliation
 
-On plugin connect, the bridge requests the complete user-visible session inventory and snapshots sessions that are new or whose watermark changed. It then performs an idempotent upsert into OpenWebUI. Live events accelerate updates, but snapshots remain authoritative and repair gaps.
+Bridge reads the complete user-visible session inventory and paginated stored messages through Hermes's authenticated `/api/sessions` and `/api/sessions/{id}/messages` endpoints on port `8642`. This supported API owns access to Hermes storage, so bridge never reads `state.db` directly and does not resume every session merely to import history. The Desktop plugin supplies credential-free profile-route descriptors for live commands and forwards runtime events. Bridge performs an idempotent upsert into OpenWebUI. Live events accelerate updates, but read-API snapshots remain authoritative and repair gaps.
 
 Reconciliation runs:
 
@@ -228,7 +231,7 @@ An operation key is derived from the OpenWebUI chat and message IDs. Repeating a
 ### Initial session import
 
 1. The Desktop plugin connects and reports its connector version and available profile routes.
-2. Bridge requests all user-visible persisted sessions.
+2. Bridge requests all user-visible persisted sessions and paginated messages through the authenticated Hermes read API.
 3. Bridge ensures a native OpenWebUI folder named `Hermes` exists for the API-key owner.
 4. For every unknown Hermes lineage, bridge creates a native OpenWebUI chat through `/api/v1/chats/new`. Bulk `/import` is not part of the normal path because it requires an additional import permission and still assigns a new OpenWebUI chat ID.
 5. Bridge stores the returned OpenWebUI chat ID and assigns the chat to the `Hermes` folder.
@@ -288,6 +291,8 @@ BRIDGE_LOG_LEVEL=info
 The user manually enables OpenWebUI API keys, creates one for the first administrator, and places it in `.env.local`. This avoids a custom OpenWebUI authentication patch. The key is supplied only to bridge-service and is never forwarded to Hermes or a browser.
 
 `make bootstrap` generates `HERMES_BRIDGE_SECRET` when absent. `make install-plugin` installs a local Desktop plugin copy with the connector credential injected into the installed, mode-`0600` artifact. The tracked plugin source and build output contain no credential. This duplicates the secret only into a file readable by the same macOS user who can already read `.env.local`.
+
+The existing Hermes `API_SERVER_KEY` continues to come from `/Users/frenzy/.hermes/.env` and is supplied only to bridge-service for the read-only session API. It is not copied into `.env.local` or the Desktop plugin.
 
 ### Network exposure
 
@@ -483,6 +488,16 @@ Heartbeat, bounded message size, schema validation, and explicit command acknowl
 **Decision:** mark ambiguous operations `delivery_uncertain`, reconcile against Hermes, and retry only after proving the turn was not accepted.
 
 **Consequences:** duplicate turns are avoided. Rare ambiguous operations may require visible operator action if Hermes cannot provide identity proof.
+
+### ADR-006: Read stored history through Hermes API and execute through Desktop plugin
+
+**Context:** importing every persisted transcript by resuming it would create unnecessary runtimes, while direct database access would bypass Hermes ownership. The public Hermes API can safely expose stored history but cannot safely share a retained Desktop agent's in-memory transport.
+
+**Options:** read `state.db` directly; resume every session through the plugin; split the read and execution paths along supported ownership boundaries.
+
+**Decision:** use authenticated Hermes HTTP endpoints for session inventory and stored-message snapshots, and use the Desktop plugin exclusively for profile routing, live submit, event fan-out, and replay.
+
+**Consequences:** initial import is read-only and bounded by API pagination. Bridge must reconcile stored snapshots with newer live events, and both the Hermes API server and Desktop plugin are readiness dependencies for full operation.
 
 ## Compatibility and Upgrade Policy
 
