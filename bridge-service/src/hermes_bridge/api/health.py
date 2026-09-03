@@ -40,7 +40,7 @@ async def ready(request: Request):
 async def status(request: Request) -> dict:
     database = getattr(request.app.state, "database", None)
     sync = getattr(request.app.state, "sync_service", None)
-    snapshot = sync.status_snapshot() if sync is not None else {
+    snapshot = await sync.current_status_snapshot() if sync is not None else {
         "last_scan": None,
         "last_successful_reconciliation": None,
         "connector": {

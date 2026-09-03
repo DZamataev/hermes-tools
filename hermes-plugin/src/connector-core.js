@@ -382,6 +382,13 @@ export function createConnector({
           target
         })
       }
+      send(
+        target,
+        frame('replay_complete', command.correlation_id, {
+          operation_id: operationId,
+          after_seq: afterSeq
+        })
+      )
     } catch {
       commandError(target, command, 'replay_failed', 'Hermes event replay failed', false)
     }

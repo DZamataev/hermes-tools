@@ -88,6 +88,7 @@ class SyncService:
         self._dropped_events = 0
         self._scan_lock = asyncio.Lock()
         self._recovery_lock = asyncio.Lock()
+        self._lineage_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def background_task_count(self) -> int:
@@ -189,24 +190,20 @@ class SyncService:
             succeeded = skipped = 0
             routes = self._unique_routes()
             self._profile_count = len(routes)
+            self._hermes_ready = False
             dependency_results = await asyncio.gather(
-                self._mirror.verify(),
-                *(self._read_inventory(route) for route in routes),
+                self._verify_openwebui(),
+                *(self._read_inventory_probe(route) for route in routes),
                 return_exceptions=True,
             )
             openwebui_result, *inventory_results = dependency_results
             if isinstance(openwebui_result, asyncio.CancelledError):
                 raise openwebui_result
             if isinstance(openwebui_result, BaseException):
-                self._openwebui_ready = False
                 failures.append(
                     self._remember_failure("openwebui", None, openwebui_result)
                 )
-            else:
-                self._openwebui_ready = True
-                self._failures.pop("openwebui", None)
 
-            any_hermes_success = False
             seen_lineages: set[str] = set()
             for route, inventory_result in zip(routes, inventory_results, strict=True):
                 route_key = f"route:{route.connection_id}:{route.profile}"
@@ -218,7 +215,6 @@ class SyncService:
                     )
                     continue
                 sessions = inventory_result
-                any_hermes_success = True
                 self._failures.pop(route_key, None)
                 for session in sessions:
                     identity = SessionIdentity(
@@ -231,59 +227,76 @@ class SyncService:
                     if identity.lineage_key in seen_lineages:
                         continue
                     seen_lineages.add(identity.lineage_key)
-                    previous = await self._mappings.by_lineage_key(identity.lineage_key)
-                    current = await self._mappings.upsert_session(identity)
-                    revision = session.revision
-                    unchanged = (
-                        previous is not None
-                        and previous.openwebui_chat_id is not None
-                        and previous.stored_session_id == identity.stored_session_id
-                        and previous.title == identity.title
-                        and revision is not None
-                        and previous.last_source_revision == revision
-                    )
-                    if unchanged:
-                        skipped += 1
-                        continue
-                    if not self._openwebui_ready:
-                        failures.append(
-                            self._remember_failure(
-                                identity.lineage_key,
-                                current.openwebui_chat_id,
-                                RuntimeError("OpenWebUI unavailable"),
-                            )
-                        )
-                        continue
+                    current: SessionMapping | None = None
                     try:
-                        messages = await self._hermes.read_messages(
-                            identity.stored_session_id, route.target_profile
-                        )
-                        await self._mirror.reconcile(identity, messages)
-                        if revision is not None:
-                            await self._mappings.update_source_revision(
-                                identity.lineage_key, revision
+                        async with self._lineage_lock(identity.lineage_key):
+                            previous = await self._mappings.by_lineage_key(
+                                identity.lineage_key
                             )
+                            current = await self._mappings.upsert_session(identity)
+                            revision = session.revision
+                            unchanged = (
+                                previous is not None
+                                and previous.openwebui_chat_id is not None
+                                and previous.stored_session_id
+                                == identity.stored_session_id
+                                and previous.title == identity.title
+                                and revision is not None
+                                and previous.last_source_revision == revision
+                            )
+                            if unchanged:
+                                skipped += 1
+                                continue
+                            if not self._openwebui_ready:
+                                raise RuntimeError("OpenWebUI unavailable")
+                            messages = await self._hermes.read_messages(
+                                identity.stored_session_id, route.target_profile
+                            )
+                            await self._mirror.reconcile(identity, messages)
+                            if revision is not None:
+                                await self._mappings.update_source_revision(
+                                    identity.lineage_key, revision
+                                )
                     except Exception as error:
                         failure = self._remember_failure(
-                            identity.lineage_key, current.openwebui_chat_id, error
+                            identity.lineage_key,
+                            current.openwebui_chat_id if current is not None else None,
+                            error,
                         )
                         failures.append(failure)
                         continue
                     succeeded += 1
                     self._mark_reconciled(identity.lineage_key)
 
-            self._hermes_ready = any_hermes_success
             self._last_scan = datetime.now(timezone.utc)
             await self._refresh_operation_counts()
             return SyncReport(succeeded, len(failures), skipped, tuple(failures))
 
-    async def _read_inventory(self, route: ProfileRoute) -> list[Any]:
-        return [
+    async def _verify_openwebui(self) -> None | Exception:
+        try:
+            await self._mirror.verify()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._openwebui_ready = False
+            return error
+        self._openwebui_ready = True
+        self._failures.pop("openwebui", None)
+        return None
+
+    async def _read_inventory_probe(self, route: ProfileRoute) -> list[Any]:
+        sessions = [
             session
             async for session in self._hermes.iter_sessions(route.target_profile)
         ]
+        self._hermes_ready = True
+        return sessions
 
     async def reconcile_lineage(self, lineage_key: str) -> MirrorResult:
+        async with self._lineage_lock(lineage_key):
+            return await self._reconcile_lineage_locked(lineage_key)
+
+    async def _reconcile_lineage_locked(self, lineage_key: str) -> MirrorResult:
         mapping = await self._mappings.by_lineage_key(lineage_key)
         if mapping is None:
             raise LookupError("lineage mapping is unavailable")
@@ -460,12 +473,16 @@ class SyncService:
                         current.id, OperationState.STREAMING
                     )
             elif event.kind in {EventKind.MESSAGE_COMPLETE, EventKind.ERROR}:
+                hermes_error = (
+                    event.kind is EventKind.ERROR
+                    or frame.payload.data.get("status") == "error"
+                )
                 current = await self._operations.transition(
                     current.id,
                     OperationState.COMPLETED,
-                    result_text=event.text or "",
-                    error_code="hermes_error" if event.kind is EventKind.ERROR else None,
-                    error_message="Hermes turn failed" if event.kind is EventKind.ERROR else None,
+                    result_text=None if hermes_error else event.text or "",
+                    error_code="hermes_error" if hermes_error else None,
+                    error_message="Hermes turn failed" if hermes_error else None,
                     last_event_seq=event.sequence,
                 )
                 await self.reconcile_lineage(mapping.lineage_key)
@@ -480,6 +497,12 @@ class SyncService:
         return current
 
     async def _snapshot_proof(
+        self, operation: Operation, mapping: SessionMapping
+    ) -> Operation:
+        async with self._lineage_lock(mapping.lineage_key):
+            return await self._snapshot_proof_locked(operation, mapping)
+
+    async def _snapshot_proof_locked(
         self, operation: Operation, mapping: SessionMapping
     ) -> Operation:
         messages = await self._hermes.read_messages(
@@ -569,6 +592,13 @@ class SyncService:
 
     async def _refresh_operation_counts(self) -> None:
         self._operation_counts = await self._operations.count_by_state()
+
+    async def current_status_snapshot(self) -> dict[str, Any]:
+        await self._refresh_operation_counts()
+        return self.status_snapshot()
+
+    def _lineage_lock(self, lineage_key: str) -> asyncio.Lock:
+        return self._lineage_locks.setdefault(lineage_key, asyncio.Lock())
 
     @property
     def ready_components(self) -> dict[str, str]:

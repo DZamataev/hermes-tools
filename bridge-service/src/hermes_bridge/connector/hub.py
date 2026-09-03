@@ -14,6 +14,7 @@ from hermes_bridge.connector.protocol import (
     HeartbeatFrame,
     HelloFrame,
     HermesEventFrame,
+    ReplayCompleteFrame,
     ReplayGapFrame,
 )
 
@@ -135,7 +136,7 @@ class ConnectorHub:
 
 def _terminal(event: ConnectorEvent) -> bool:
     return (
-        isinstance(event, (CommandErrorFrame, ReplayGapFrame))
+        isinstance(event, (CommandErrorFrame, ReplayGapFrame, ReplayCompleteFrame))
         or isinstance(event, HermesEventFrame)
         and event.payload.event_type in {"message.complete", "error"}
     )

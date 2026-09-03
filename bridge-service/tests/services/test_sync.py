@@ -8,7 +8,9 @@ from uuid import UUID
 
 import pytest
 
-from hermes_bridge.connector.protocol import HermesEventFrame, ProfileRoute, ReplayGapFrame
+from hermes_bridge.connector.protocol import (
+    HermesEventFrame, ProfileRoute, ReplayCompleteFrame, ReplayGapFrame,
+)
 from hermes_bridge.domain.models import Operation, OperationState, SessionIdentity, SessionMapping, utc_now
 from hermes_bridge.hermes.client import HermesMessage, HermesSession
 from hermes_bridge.openwebui.mirror import MirrorResult
@@ -35,8 +37,11 @@ def mapping(root: str, *, tip: str | None = None, title: str | None = None) -> S
 class FakeMappings:
     def __init__(self, values: list[SessionMapping] | None = None) -> None:
         self.values = {item.lineage_key: item for item in values or []}
+        self.failing_upsert_roots: set[str] = set()
 
     async def upsert_session(self, identity):
+        if identity.lineage_root_id in self.failing_upsert_roots:
+            raise RuntimeError("broken mapping row")
         current = self.values.get(identity.lineage_key)
         value = (
             replace(current, stored_session_id=identity.stored_session_id, title=identity.title)
@@ -63,6 +68,12 @@ class FakeMappings:
 
     async def list_all(self):
         return list(self.values.values())
+
+    async def attach_chat(self, lineage_key, chat_id):
+        self.values[lineage_key] = replace(
+            self.values[lineage_key], openwebui_chat_id=chat_id
+        )
+        return self.values[lineage_key]
 
     async def update_source_revision(self, lineage_key, source_revision):
         self.values[lineage_key] = replace(
@@ -167,6 +178,7 @@ class FakeConnector:
         self.epoch = "epoch-1"
         self.connector_version = "1.0.0"
         self.replay_result = None
+        self.replay_results = None
         self.commands = []
         self.connection_listener = None
         self.event_listener = None
@@ -177,6 +189,10 @@ class FakeConnector:
 
     async def dispatch(self, command):
         self.commands.append(command)
+        if self.replay_results is not None:
+            for result in self.replay_results:
+                yield result
+            return
         if self.replay_result is not None:
             yield self.replay_result
 
@@ -250,6 +266,21 @@ async def test_full_scan_isolates_one_failing_chat_and_tracks_safe_failure():
     assert sync.status_snapshot()["components"]["hermes_read_api"] == "ready"
 
 
+async def test_full_scan_isolates_a_failing_second_mapping_write():
+    sessions = [
+        HermesSession(f"tip-root-{index}", f"root-{index}", str(index))
+        for index in (1, 2, 3)
+    ]
+    mappings = FakeMappings()
+    mappings.failing_upsert_roots.add("root-2")
+    sync, _, mirror, *_ = service(sessions=sessions, mappings=mappings)
+
+    report = await sync.full_scan()
+
+    assert report.succeeded == 2 and report.failed == 1
+    assert [call[0].lineage_root_id for call in mirror.calls] == ["root-1", "root-3"]
+
+
 async def test_openwebui_and_hermes_dependency_checks_start_independently():
     sync, hermes, mirror, *_ = service()
     mirror_started = asyncio.Event()
@@ -269,6 +300,51 @@ async def test_openwebui_and_hermes_dependency_checks_start_independently():
     hermes.iter_sessions = inventory
     await asyncio.wait_for(sync.full_scan(), 0.1)
     assert mirror_started.is_set() and hermes_started.is_set()
+
+
+async def test_readiness_updates_before_the_slowest_probe_finishes():
+    sync, hermes, mirror, *_ = service()
+    openwebui_done = asyncio.Event()
+    release_hermes = asyncio.Event()
+
+    async def verify():
+        openwebui_done.set()
+
+    async def inventory(_profile):
+        await release_hermes.wait()
+        if False:
+            yield None
+
+    mirror.verify = verify
+    hermes.iter_sessions = inventory
+    scan = asyncio.create_task(sync.full_scan())
+    await openwebui_done.wait()
+    await asyncio.sleep(0)
+    assert sync.ready_components["openwebui"] == "ready"
+    assert scan.done() is False
+    release_hermes.set()
+    await scan
+
+    release_openwebui = asyncio.Event()
+    hermes_done = asyncio.Event()
+
+    async def slow_verify():
+        await release_openwebui.wait()
+
+    async def quick_inventory(_profile):
+        hermes_done.set()
+        if False:
+            yield None
+
+    mirror.verify = slow_verify
+    hermes.iter_sessions = quick_inventory
+    scan = asyncio.create_task(sync.full_scan())
+    await hermes_done.wait()
+    await asyncio.sleep(0)
+    assert sync.ready_components["hermes_read_api"] == "ready"
+    assert scan.done() is False
+    release_openwebui.set()
+    await scan
 
 
 async def test_unchanged_inventory_revision_skips_history_but_title_or_tip_drift_reconciles():
@@ -380,6 +456,55 @@ async def test_replay_terminal_proves_completion_and_unblocks_lineage():
     assert queue.reconciled[-1] == (current.lineage_key, False)
 
 
+@pytest.mark.parametrize("events", [[], ["message.delta"]])
+async def test_replay_complete_terminates_without_proof_and_keeps_uncertain(events):
+    current = mapping("root-1")
+    op = operation(OperationState.ACCEPTED, last_event_seq=510)
+    operations = FakeOperations([op])
+    sync, _, _, _, operations, connector, queue = service(
+        mappings=FakeMappings([current]), operations=operations
+    )
+    frames = []
+    if events:
+        delta = event_frame("message.delta", {"text": "partial"}, seq=511)
+        frames.append(delta.model_copy(update={
+            "correlation_id": str(op.id),
+            "payload": delta.payload.model_copy(update={"operation_id": str(op.id)}),
+        }))
+    frames.append(replay_complete(str(op.id), after_seq=510))
+    connector.replay_results = frames
+
+    report = await asyncio.wait_for(sync.recover_incomplete_operations(), 0.1)
+
+    assert report.uncertain == 1
+    assert operations.values[op.id].state is OperationState.DELIVERY_UNCERTAIN
+    assert queue.reconciled[-1] == (current.lineage_key, True)
+
+
+async def test_replayed_error_completion_is_persisted_as_hermes_error():
+    current = mapping("root-1")
+    op = operation(OperationState.ACCEPTED, last_event_seq=510)
+    operations = FakeOperations([op])
+    sync, _, _, _, operations, connector, _ = service(
+        mappings=FakeMappings([current]), operations=operations
+    )
+    failed = event_frame(
+        "message.complete", {"status": "error", "text": "sensitive provider detail"}, seq=511
+    )
+    connector.replay_result = failed.model_copy(update={
+        "correlation_id": str(op.id),
+        "payload": failed.payload.model_copy(update={"operation_id": str(op.id)}),
+    })
+
+    await sync.recover_incomplete_operations()
+
+    restored = operations.values[op.id]
+    assert restored.state is OperationState.COMPLETED
+    assert restored.error_code == "hermes_error"
+    assert restored.error_message == "Hermes turn failed"
+    assert "sensitive" not in restored.error_message
+
+
 async def test_replay_gap_completes_only_with_persisted_bridge_operation_identity():
     current = mapping("root-1")
     op = operation(OperationState.DELIVERY_UNCERTAIN)
@@ -466,6 +591,46 @@ async def test_unsolicited_event_buffer_is_bounded_and_reports_drops():
     assert sync.status_snapshot()["dropped_live_events"] == 44
 
 
+async def test_same_lineage_reconciliations_cannot_create_two_chats():
+    current = replace(mapping("root-1"), openwebui_chat_id=None)
+    mappings = FakeMappings([current])
+    sync, _, _, _, *_ = service(mappings=mappings)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class CreatingMirror:
+        async def verify(self):
+            return None
+
+        async def reconcile(self, identity, messages):
+            stored = await mappings.by_lineage_key(identity.lineage_key)
+            created = stored.openwebui_chat_id is None
+            if created:
+                started.set()
+                await release.wait()
+                await mappings.attach_chat(identity.lineage_key, "chat-created")
+            return MirrorResult("chat-created", created, (), True)
+
+    sync._mirror = CreatingMirror()
+    first = asyncio.create_task(sync.reconcile_lineage(current.lineage_key))
+    await started.wait()
+    second = asyncio.create_task(sync.reconcile_lineage(current.lineage_key))
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second)
+    assert sum(result.created for result in results) == 1
+
+
+async def test_current_status_refreshes_operation_counts():
+    op = operation(OperationState.DELIVERY_UNCERTAIN)
+    operations = FakeOperations()
+    sync, *_ = service(operations=operations)
+    assert sync.status_snapshot()["queue"]["uncertain"] == 0
+    operations.values[op.id] = op
+    status = await sync.current_status_snapshot()
+    assert status["queue"]["uncertain"] == 1
+
+
 def event_frame(event_type: str, data: dict, *, seq: int) -> HermesEventFrame:
     return HermesEventFrame.model_validate(
         {
@@ -502,3 +667,14 @@ def replay_gap(operation_id: str, *, after_seq: int) -> ReplayGapFrame:
             },
         }
     )
+
+
+def replay_complete(operation_id: str, *, after_seq: int) -> ReplayCompleteFrame:
+    return ReplayCompleteFrame.model_validate({
+        "protocol": 1,
+        "kind": "replay_complete",
+        "id": "complete-1",
+        "correlation_id": operation_id,
+        "sent_at": datetime.now(timezone.utc),
+        "payload": {"operation_id": operation_id, "after_seq": after_seq},
+    })

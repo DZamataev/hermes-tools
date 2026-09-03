@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from hermes_bridge.app import create_app
 from hermes_bridge.connector.hub import ConnectorDisconnected, ConnectorHub
 from hermes_bridge.connector.protocol import (
-    AcceptedFrame, HeartbeatFrame, HelloFrame, HermesEventFrame, SubmitFrame, sign_challenge,
+    AcceptedFrame, HeartbeatFrame, HelloFrame, HermesEventFrame, ReplayCompleteFrame,
+    ReplayFrame, SubmitFrame, sign_challenge,
 )
 
 
@@ -129,3 +130,28 @@ async def test_unsolicited_event_reaches_observer_without_affecting_dispatch():
     })
     await hub.receive(event, socket)
     assert observed == [event]
+
+
+async def test_replay_complete_terminates_correlated_dispatch():
+    hub, socket = ConnectorHub(20), FakeSocket()
+    await hub.connect(socket, hello())
+    command = ReplayFrame.model_validate({
+        "protocol": 1, "kind": "replay", "id": "replay-1", "correlation_id": "op-1",
+        "sent_at": datetime.now(timezone.utc),
+        "payload": {"operation_id": "op-1", "route": {
+            "connection_id": "local", "profile": "default", "target_profile": "default"
+        }, "runtime_session_id": "runtime-1", "after_seq": 7},
+    })
+    task = asyncio.create_task(_collect(hub.dispatch(command)))
+    await asyncio.sleep(0)
+    terminal = ReplayCompleteFrame.model_validate({
+        "protocol": 1, "kind": "replay_complete", "id": "complete-1",
+        "correlation_id": "op-1", "sent_at": datetime.now(timezone.utc),
+        "payload": {"operation_id": "op-1", "after_seq": 7},
+    })
+    await hub.receive(terminal)
+    assert await asyncio.wait_for(task, 0.1) == [terminal]
+
+
+async def _collect(events):
+    return [event async for event in events]

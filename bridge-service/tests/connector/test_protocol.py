@@ -8,7 +8,7 @@ from pydantic import ValidationError
 
 from hermes_bridge.connector.protocol import (
     AuthenticationError, Challenge, HelloFrame, MAX_FRAME_BYTES, ProtocolError,
-    SubmitFrame, parse_incoming, sign_challenge, verify_hello,
+    ReplayCompleteFrame, SubmitFrame, parse_incoming, sign_challenge, verify_hello,
 )
 
 
@@ -62,3 +62,16 @@ def test_parse_rejects_unknown_protocol_kind_and_oversized_payload():
         parse_incoming(json.dumps({"protocol": 1, "kind": "rpc"}))
     with pytest.raises(ProtocolError, match="1 MiB"):
         parse_incoming(b"x" * (MAX_FRAME_BYTES + 1))
+
+
+def test_replay_complete_is_a_typed_protocol_v1_frame():
+    frame = parse_incoming(json.dumps({
+        "protocol": 1,
+        "kind": "replay_complete",
+        "id": "complete-1",
+        "correlation_id": "op-1",
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "payload": {"operation_id": "op-1", "after_seq": 7},
+    }))
+    assert isinstance(frame, ReplayCompleteFrame)
+    assert frame.payload.after_seq == 7

@@ -117,6 +117,16 @@ class ReplayGapFrame(BaseFrame):
     payload: ReplayGapPayload
 
 
+class ReplayCompletePayload(StrictModel):
+    operation_id: str = Field(min_length=1)
+    after_seq: int = Field(ge=0)
+
+
+class ReplayCompleteFrame(BaseFrame):
+    kind: Literal["replay_complete"] = "replay_complete"
+    payload: ReplayCompletePayload
+
+
 class AcceptedPayload(StrictModel):
     operation_id: str = Field(min_length=1)
     runtime_session_id: str = Field(min_length=1)
@@ -159,11 +169,25 @@ class CommandErrorFrame(BaseFrame):
 
 ConnectorCommand = Annotated[Union[SubmitFrame, ReplayFrame], Field(discriminator="kind")]
 ConnectorEvent = Annotated[
-    Union[AcceptedFrame, ReplayGapFrame, HermesEventFrame, CommandErrorFrame],
+    Union[
+        AcceptedFrame,
+        ReplayGapFrame,
+        ReplayCompleteFrame,
+        HermesEventFrame,
+        CommandErrorFrame,
+    ],
     Field(discriminator="kind"),
 ]
 IncomingFrame = Annotated[
-    Union[HelloFrame, HeartbeatFrame, AcceptedFrame, ReplayGapFrame, HermesEventFrame, CommandErrorFrame],
+    Union[
+        HelloFrame,
+        HeartbeatFrame,
+        AcceptedFrame,
+        ReplayGapFrame,
+        ReplayCompleteFrame,
+        HermesEventFrame,
+        CommandErrorFrame,
+    ],
     Field(discriminator="kind"),
 ]
 

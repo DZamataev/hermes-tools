@@ -406,6 +406,21 @@ test('replay invokes only session.events.since and forwards returned events', as
     'session.events.since', SDK_ROUTE, { session_id: 'runtime-1', last_seen: 7 }, 60_000
   ]])
   assert.equal(frames(socket, 'hermes_event')[0].payload.data.text, 'replayed')
+  assert.deepEqual(frames(socket, 'replay_complete')[0].payload, {
+    operation_id: 'op-1', after_seq: 7
+  })
+  connector.stop()
+})
+
+test('empty replay emits an explicit terminal replay completion', async () => {
+  const host = fakeHost({ async requestProfile() { return { truncated: false, events: [] } } })
+  const { connector, socket } = await connect({ host })
+  await socket.receive(command('replay', {
+    operation_id: 'op-1', route: WIRE_ROUTE, runtime_session_id: 'runtime-1', after_seq: 7
+  }))
+  assert.deepEqual(frames(socket, 'replay_complete')[0].payload, {
+    operation_id: 'op-1', after_seq: 7
+  })
   connector.stop()
 })
 
