@@ -121,6 +121,7 @@ class TurnRequest:
 class Operation:
     id: UUID
     chat_id: str
+    lineage_key: str | None
     user_message_id: str
     assistant_message_id: str
     text: str

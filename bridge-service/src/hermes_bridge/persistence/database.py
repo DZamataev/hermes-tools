@@ -57,6 +57,7 @@ class Database:
                 operation_order INTEGER PRIMARY KEY AUTOINCREMENT,
                 operation_id TEXT NOT NULL UNIQUE,
                 chat_id TEXT NOT NULL,
+                lineage_key TEXT,
                 user_message_id TEXT NOT NULL,
                 assistant_message_id TEXT NOT NULL,
                 text TEXT NOT NULL,
@@ -80,6 +81,33 @@ class Database:
                 stored_session_id TEXT,
                 occurred_at TEXT NOT NULL
             );
+            """
+        )
+        cursor = await self._connection.execute("PRAGMA table_info(operation)")
+        operation_columns = {row["name"] for row in await cursor.fetchall()}
+        if "lineage_key" not in operation_columns:
+            await self._connection.execute("ALTER TABLE operation ADD COLUMN lineage_key TEXT")
+        await self._connection.execute(
+            """
+            UPDATE operation
+            SET lineage_key = (
+                SELECT connection_id || ':' || profile || ':' || lineage_root_id
+                FROM session_mapping
+                WHERE session_mapping.openwebui_chat_id = operation.chat_id
+            )
+            WHERE lineage_key IS NULL
+              AND EXISTS (
+                SELECT 1 FROM session_mapping
+                WHERE session_mapping.openwebui_chat_id = operation.chat_id
+            )
+            """
+        )
+        await self._connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS operation_one_active_per_lineage
+            ON operation(lineage_key)
+            WHERE lineage_key IS NOT NULL
+              AND state IN ('offered', 'accepted', 'streaming', 'delivery_uncertain')
             """
         )
         await self._connection.execute(

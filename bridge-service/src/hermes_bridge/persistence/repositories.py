@@ -49,6 +49,7 @@ def _operation(row: aiosqlite.Row) -> Operation:
     return Operation(
         id=UUID(row["operation_id"]),
         chat_id=row["chat_id"],
+        lineage_key=row["lineage_key"],
         user_message_id=row["user_message_id"],
         assistant_message_id=row["assistant_message_id"],
         text=row["text"],
@@ -152,16 +153,18 @@ class OperationRepository:
 
             operation_id = uuid4()
             now = _timestamp(request.created_at)
+            lineage_key = await self._lineage_for_chat(connection, request.chat_id)
             await connection.execute(
                 """
                 INSERT INTO operation (
-                    operation_id, chat_id, user_message_id, assistant_message_id, text,
+                    operation_id, chat_id, lineage_key, user_message_id, assistant_message_id, text,
                     state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(operation_id),
                     request.chat_id,
+                    lineage_key,
                     request.user_message_id,
                     request.assistant_message_id,
                     request.text,
@@ -176,6 +179,21 @@ class OperationRepository:
             row = await cursor.fetchone()
         assert row is not None
         return _operation(row), True
+
+    @staticmethod
+    async def _lineage_for_chat(
+        connection: aiosqlite.Connection, chat_id: str
+    ) -> str | None:
+        cursor = await connection.execute(
+            """
+            SELECT connection_id || ':' || profile || ':' || lineage_root_id AS lineage_key
+            FROM session_mapping
+            WHERE openwebui_chat_id = ?
+            """,
+            (chat_id,),
+        )
+        row = await cursor.fetchone()
+        return row["lineage_key"] if row is not None else None
 
     async def transition(
         self, operation_id: UUID, target: OperationState, **fields: object
@@ -197,6 +215,50 @@ class OperationRepository:
             if not transition_is_valid(current.state, target):
                 raise InvalidTransition(f"cannot transition {current.state} to {target}")
 
+            lineage_key = current.lineage_key
+            if target is OperationState.OFFERED:
+                lineage_key = await self._lineage_for_chat(connection, current.chat_id)
+                if lineage_key is None:
+                    raise LookupError(f"no session mapping for chat {current.chat_id}")
+                await connection.execute(
+                    """
+                    UPDATE operation
+                    SET lineage_key = ?
+                    WHERE chat_id = ? AND lineage_key IS NULL
+                    """,
+                    (lineage_key, current.chat_id),
+                )
+                cursor = await connection.execute(
+                    """
+                    SELECT operation_id FROM operation
+                    WHERE lineage_key = ? AND state = ?
+                    ORDER BY operation_order
+                    LIMIT 1
+                    """,
+                    (lineage_key, OperationState.PENDING.value),
+                )
+                first_pending = await cursor.fetchone()
+                if first_pending is None or first_pending["operation_id"] != str(operation_id):
+                    raise InvalidTransition("only the first pending operation may be offered")
+                cursor = await connection.execute(
+                    """
+                    SELECT operation_id FROM operation
+                    WHERE lineage_key = ? AND operation_id != ?
+                      AND state IN (?, ?, ?, ?)
+                    LIMIT 1
+                    """,
+                    (
+                        lineage_key,
+                        str(operation_id),
+                        OperationState.OFFERED.value,
+                        OperationState.ACCEPTED.value,
+                        OperationState.STREAMING.value,
+                        OperationState.DELIVERY_UNCERTAIN.value,
+                    ),
+                )
+                if await cursor.fetchone() is not None:
+                    raise InvalidTransition("another operation is active for this lineage")
+
             next_values = {
                 "result_text": current.result_text,
                 "error_code": current.error_code,
@@ -209,7 +271,7 @@ class OperationRepository:
                 """
                 UPDATE operation
                 SET state = ?, result_text = ?, error_code = ?, error_message = ?,
-                    last_event_seq = ?, updated_at = ?
+                    last_event_seq = ?, lineage_key = ?, updated_at = ?
                 WHERE operation_id = ?
                 """,
                 (
@@ -218,6 +280,7 @@ class OperationRepository:
                     next_values["error_code"],
                     next_values["error_message"],
                     next_values["last_event_seq"],
+                    lineage_key,
                     now,
                     str(operation_id),
                 ),
@@ -268,6 +331,34 @@ class EventRepository:
 
     async def record(self, event: TurnEvent) -> bool:
         async with self._database.write_transaction() as connection:
+            mapping = await MappingRepository._fetch_mapping_by_lineage(
+                connection, event.lineage_key
+            )
+            if mapping is None:
+                raise LookupError(f"no session mapping for lineage {event.lineage_key}")
+            if event.operation_id is not None:
+                cursor = await connection.execute(
+                    """
+                    SELECT operation.lineage_key, session_mapping.connection_id || ':' ||
+                           session_mapping.profile || ':' || session_mapping.lineage_root_id
+                           AS mapped_lineage_key
+                    FROM operation
+                    JOIN session_mapping
+                      ON session_mapping.openwebui_chat_id = operation.chat_id
+                    WHERE operation.operation_id = ?
+                    """,
+                    (str(event.operation_id),),
+                )
+                operation = await cursor.fetchone()
+                if operation is None:
+                    raise LookupError(f"no mapped operation for event {event.event_id}")
+                if operation["mapped_lineage_key"] != event.lineage_key:
+                    raise ValueError("event operation belongs to a different lineage")
+                if (
+                    operation["lineage_key"] is not None
+                    and operation["lineage_key"] != event.lineage_key
+                ):
+                    raise ValueError("operation lineage does not match its mapping")
             cursor = await connection.execute(
                 """
                 INSERT INTO turn_event (
