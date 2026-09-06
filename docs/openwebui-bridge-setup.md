@@ -51,7 +51,9 @@ source or commit this file.
 
 Save the connection and keep the `hermes-live` model enabled. These template
 names are provided by the pinned OpenWebUI fork; do not replace them with fixed
-IDs.
+IDs. Before testing, confirm `hermes-live` appears in the model selector. If it
+is absent, the bridge connection is not active; submitting with `hermes-agent`
+uses the direct Hermes connection and does not test the bridge.
 
 Install the update-safe Desktop plugin:
 
@@ -85,23 +87,28 @@ MVP. Start in an automatically mirrored chat inside the `Hermes` folder.
 
 After the one-time setup:
 
+Use Peekaboo as the computer-use driver for automated macOS UI actions in this
+workflow. Do not substitute Orca or another UI driver.
+
 1. Run `make install-plugin`, `make start`, and `make status`.
-2. Confirm `http://localhost:11001/health` and
+2. Confirm `hermes-live` is present in the OpenWebUI model selector. Stop the
+   acceptance run if it is absent.
+3. Confirm `http://localhost:11001/health` and
    `http://127.0.0.1:8787/health/ready` succeed.
-3. Confirm volumes `hermes_open-webui` and `hermes_bridge-data` exist.
-4. From `/health/status`, record one lineage/session identifier without
+4. Confirm volumes `hermes_open-webui` and `hermes_bridge-data` exist.
+5. From `/health/status`, record one lineage/session identifier without
    recording prompt content; confirm it appears exactly once in `Hermes`.
-5. Open the same chat in Desktop and OpenWebUI. Send a unique idle message from
-   OpenWebUI and confirm the same lineage receives it.
-6. Start a Desktop turn, then send another unique OpenWebUI message while busy;
+6. Open the same chat in Desktop and OpenWebUI, select `hermes-live`, send a
+   unique idle message from OpenWebUI, and confirm the same lineage receives it.
+7. Start a Desktop turn, then send another unique OpenWebUI message while busy;
    confirm FIFO order.
-7. Send a Desktop-originated turn and confirm the already-open OpenWebUI chat
+8. Send a Desktop-originated turn and confirm the already-open OpenWebUI chat
    reloads with the stored result.
-8. Restart only `bridge-service`; confirm there is no duplicate chat, message,
+9. Restart only `bridge-service`; confirm there is no duplicate chat, message,
    or Hermes turn.
-9. Quit Hermes Desktop. History must remain readable and submit must fail with
+10. Quit Hermes Desktop. History must remain readable and submit must fail with
    `hermes_desktop_offline` rather than starting a shadow runtime.
-10. Reopen Desktop and confirm `/health/ready` recovers without manually
+11. Reopen Desktop and confirm `/health/ready` recovers without manually
     reopening the Hermes session.
 
 ## Rotation and recovery

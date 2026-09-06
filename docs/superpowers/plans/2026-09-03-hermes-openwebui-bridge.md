@@ -1138,15 +1138,21 @@ Expected: both health calls succeed, bridge reports Desktop connector ready, and
 
 - [ ] **Step 5: Perform the manual session-continuity acceptance sequence**
 
-1. Record one existing Hermes lineage/session ID from bridge status without exposing content.
-2. Confirm it appears once in OpenWebUI's `Hermes` folder.
-3. Open that chat in both clients.
-4. Submit a unique text from OpenWebUI while idle and verify the same lineage receives it.
-5. Start a Desktop turn, submit another unique text from OpenWebUI while busy, and verify FIFO order.
-6. Submit from Desktop and verify the open OpenWebUI chat receives `chat:reload` and displays the result.
-7. Restart bridge-service and verify no duplicate chat or message appears.
-8. Quit Hermes Desktop and verify OpenWebUI history remains readable while submit returns `hermes_desktop_offline`.
-9. Reopen Hermes Desktop and verify connector readiness recovers without reopening the session manually.
+Use Peekaboo as the computer-use driver for any automated macOS UI steps in
+this sequence. Do not substitute Orca or another UI driver.
+
+1. Confirm the OpenWebUI model selector contains `hermes-live`. Stop here if it
+   is absent: the bridge connection is not active, and a submit through another
+   model does not exercise this workflow.
+2. Record one existing Hermes lineage/session ID from bridge status without exposing content.
+3. Confirm it appears once in OpenWebUI's `Hermes` folder.
+4. Open that chat in both clients and select `hermes-live`.
+5. Submit a unique text from OpenWebUI while idle and verify the same lineage receives it.
+6. Start a Desktop turn, submit another unique text from OpenWebUI while busy, and verify FIFO order.
+7. Submit from Desktop and verify the open OpenWebUI chat receives `chat:reload` and displays the result.
+8. Restart bridge-service and verify no duplicate chat or message appears.
+9. Quit Hermes Desktop and verify OpenWebUI history remains readable while submit returns `hermes_desktop_offline`.
+10. Reopen Hermes Desktop and verify connector readiness recovers without reopening the session manually.
 
 - [ ] **Step 6: Run all automated verification**
 
