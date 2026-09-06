@@ -35,7 +35,8 @@ validate_secret_source() {
     }
     END {
       if (!found || value == "") value = "8787"
-      if (value !~ /^[0-9]+$/ || value < 1 || value > 65535) exit 1
+      port_number = value + 0
+      if (value !~ /^[0-9]+$/ || port_number < 1 || port_number > 65535) exit 1
       print value
     }
   ' "$LOCAL_ENV_FILE") ||

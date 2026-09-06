@@ -112,7 +112,7 @@ print -r -- "API_SERVER_KEY=$TEST_SECRET" > "$TEST_TMP/hermes.env"
 {
   print -r -- "OPENWEBUI_API_KEY=$TEST_OPENWEBUI_SECRET"
   print -r -- "HERMES_BRIDGE_SECRET=$TEST_BRIDGE_SECRET"
-  print -r -- "BRIDGE_HOST_PORT=18787"
+  print -r -- "BRIDGE_HOST_PORT=8787"
 } > "$TEST_TMP/project/.env.local"
 FAKE_CALLS="$TEST_TMP/calls"
 FAKE_DOCKER_COUNTER="$TEST_TMP/docker-counter"
@@ -140,7 +140,7 @@ assert_contains "$start_calls" "$compose_prefix up -d --remove-orphans"
 assert_before "$start_calls" "$TEST_TMP/hermes.env" "$TEST_TMP/project/.env.local"
 assert_contains "$start_calls" "--fail --silent --show-error --output /dev/null --max-time "
 assert_contains "$start_calls" "http://localhost:11001/health"
-assert_contains "$start_calls" "http://127.0.0.1:18787/health/ready"
+assert_contains "$start_calls" "http://127.0.0.1:8787/health/ready"
 for secret in "$TEST_SECRET" "$TEST_OPENWEBUI_SECRET" "$TEST_BRIDGE_SECRET"; do
   assert_not_contains "$(<"$TEST_TMP/start.stdout")" "$secret"
   assert_not_contains "$(<"$TEST_TMP/start.stderr")" "$secret"
@@ -189,7 +189,7 @@ unset FAKE_CURL_EXIT
 [[ $code -ne 0 ]] || fail "status must fail when containers run but connector is not ready"
 assert_contains "$(<"$TEST_TMP/not-ready.stdout")" "Containers: running"
 assert_contains "$(<"$TEST_TMP/not-ready.stderr")" "connector-ready"
-assert_contains "$(<"$FAKE_CALLS")" "http://127.0.0.1:18787/health/ready"
+assert_contains "$(<"$FAKE_CALLS")" "http://127.0.0.1:8787/health/ready"
 
 : > "$TEST_TMP/runner.log"
 export FAKE_COMPOSE_EXIT=42
