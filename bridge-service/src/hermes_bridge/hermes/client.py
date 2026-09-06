@@ -13,6 +13,7 @@ import httpx
 _SESSIONS_PAGE_SIZE = 100
 _MESSAGES_PAGE_SIZE = 500
 _TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=30.0, pool=5.0)
+_VISIBLE_MESSAGE_ROLES = frozenset({"user", "assistant", "system", "tool"})
 
 
 class HermesReadError(RuntimeError):
@@ -179,6 +180,9 @@ def _session_from_payload(payload: Mapping[str, Any]) -> HermesSession:
 def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
     if payload.get("display_kind") == "hidden":
         return None
+    role = _required_string(payload, "role", "message")
+    if role not in _VISIBLE_MESSAGE_ROLES:
+        return None
     raw_message_id = payload.get("id")
     if (
         isinstance(raw_message_id, bool)
@@ -189,10 +193,8 @@ def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
             "invalid message response shape: id must be a non-empty string or integer"
         )
     message_id = str(raw_message_id)
-    role = _required_string(payload, "role", "message")
     content = payload.get("display_content", payload.get("content"))
-    if not isinstance(content, str):
-        raise HermesReadError("invalid message response shape: content must be a string")
+    content = _coerce_message_text(content)
     created_at = payload.get("created_at", payload.get("timestamp"))
     if isinstance(created_at, bool) or not isinstance(created_at, int | float | str):
         raise HermesReadError("invalid message response shape: created_at must be a timestamp")
@@ -206,6 +208,27 @@ def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
         created_at=created_at,
         bridge_operation_id=bridge_operation_id,
     )
+
+
+def _coerce_message_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise HermesReadError(
+            "invalid message response shape: content must be a string or list of text parts"
+        )
+
+    text_parts: list[str] = []
+    for part in content:
+        if isinstance(part, str):
+            text_parts.append(part)
+        elif isinstance(part, Mapping) and isinstance(part.get("text"), str):
+            text_parts.append(part["text"])
+        else:
+            raise HermesReadError(
+                "invalid message response shape: content list contains an unsupported part"
+            )
+    return "".join(text_parts)
 
 
 def _required_string(payload: Mapping[str, Any], field: str, resource: str) -> str:

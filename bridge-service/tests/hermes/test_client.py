@@ -226,3 +226,83 @@ async def test_read_messages_skips_hidden_compaction_carrier_and_uses_display_co
         ("visible-1", "assistant", "visible answer"),
         ("visible-2", "tool", "tool output"),
     ]
+
+
+async def test_read_messages_omits_internal_role_before_validating_null_content():
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "messages": [
+                        {"id": "1", "role": "user", "content": "hello", "created_at": 1},
+                        {"id": "2", "role": "session_meta", "content": None, "created_at": 2},
+                        {"id": "3", "role": "assistant", "content": "hi", "created_at": 3},
+                    ]
+                },
+            )
+        ),
+    )
+
+    messages = await client.read_messages("session-1", "default")
+
+    assert [(message.id, message.role, message.content) for message in messages] == [
+        ("1", "user", "hello"),
+        ("3", "assistant", "hi"),
+    ]
+
+
+async def test_read_messages_normalizes_text_parts_in_source_order():
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "messages": [
+                        {
+                            "id": "1",
+                            "role": "tool",
+                            "content": ["first", {"text": " second"}, " third"],
+                            "created_at": 1,
+                        },
+                        {
+                            "id": "2",
+                            "role": "assistant",
+                            "content": "fallback",
+                            "display_content": [{"text": "shown"}, " answer"],
+                            "created_at": 2,
+                        },
+                    ]
+                },
+            )
+        ),
+    )
+
+    messages = await client.read_messages("session-1", "default")
+
+    assert [message.content for message in messages] == ["first second third", "shown answer"]
+
+
+@pytest.mark.parametrize("content", [[{"type": "image"}], [None], [1], [False]])
+async def test_read_messages_rejects_unsupported_content_parts(content: object):
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "messages": [
+                        {"id": "1", "role": "tool", "content": content, "created_at": 1}
+                    ]
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(HermesReadError, match="content"):
+        await client.read_messages("session-1", "default")
