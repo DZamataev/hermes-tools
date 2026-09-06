@@ -287,7 +287,52 @@ async def test_read_messages_normalizes_text_parts_in_source_order():
     assert [message.content for message in messages] == ["first second third", "shown answer"]
 
 
-@pytest.mark.parametrize("content", [[{"type": "image"}], [None], [1], [False]])
+async def test_read_messages_redacts_image_url_parts_after_preceding_text():
+    source_reference = "opaque-image-reference"
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "messages": [
+                        {
+                            "id": "1",
+                            "role": "tool",
+                            "content": [
+                                "tool result",
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": source_reference},
+                                },
+                            ],
+                            "created_at": 1,
+                        }
+                    ]
+                },
+            )
+        ),
+    )
+
+    messages = await client.read_messages("session-1", "default")
+
+    assert messages[0].content == "tool result\n[image]"
+    assert source_reference not in messages[0].content
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "image"}],
+        [{"type": "image_url", "image_url": ""}],
+        [{"type": "image_url", "image_url": {"url": ""}}],
+        [{"type": "image_url", "image_url": {"url": 1}}],
+        [None],
+        [1],
+        [False],
+    ],
+)
 async def test_read_messages_rejects_unsupported_content_parts(content: object):
     client = HermesReadClient(
         "http://hermes",

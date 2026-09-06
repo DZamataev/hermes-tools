@@ -222,8 +222,27 @@ def _coerce_message_text(content: Any) -> str:
     for part in content:
         if isinstance(part, str):
             text_parts.append(part)
-        elif isinstance(part, Mapping) and isinstance(part.get("text"), str):
-            text_parts.append(part["text"])
+        elif isinstance(part, Mapping):
+            if part.get("type") == "image_url":
+                image_url = part.get("image_url")
+                if isinstance(image_url, str) and image_url:
+                    text_parts.append("\n[image]")
+                elif (
+                    isinstance(image_url, Mapping)
+                    and isinstance(image_url.get("url"), str)
+                    and image_url["url"]
+                ):
+                    text_parts.append("\n[image]")
+                else:
+                    raise HermesReadError(
+                        "invalid message response shape: content list contains an unsupported part"
+                    )
+            elif isinstance(part.get("text"), str):
+                text_parts.append(part["text"])
+            else:
+                raise HermesReadError(
+                    "invalid message response shape: content list contains an unsupported part"
+                )
         else:
             raise HermesReadError(
                 "invalid message response shape: content list contains an unsupported part"
