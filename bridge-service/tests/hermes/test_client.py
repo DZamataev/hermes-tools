@@ -116,6 +116,28 @@ async def test_reads_installed_hermes_data_envelope_and_field_names():
     assert [message.created_at for message in messages] == [41, 42]
 
 
+async def test_read_messages_normalizes_installed_numeric_ids_in_order():
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"id": 41, "role": "user", "content": "hello", "timestamp": 41},
+                        {"id": 42, "role": "assistant", "content": "hi", "timestamp": 42},
+                    ]
+                },
+            )
+        ),
+    )
+
+    messages = await client.read_messages("tip-2", "default")
+
+    assert [message.id for message in messages] == ["41", "42"]
+
+
 async def test_null_installed_lineage_root_falls_back_to_tip():
     client = HermesReadClient(
         "http://hermes",

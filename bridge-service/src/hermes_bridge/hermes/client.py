@@ -179,7 +179,16 @@ def _session_from_payload(payload: Mapping[str, Any]) -> HermesSession:
 def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
     if payload.get("display_kind") == "hidden":
         return None
-    message_id = _required_string(payload, "id", "message")
+    raw_message_id = payload.get("id")
+    if (
+        isinstance(raw_message_id, bool)
+        or not isinstance(raw_message_id, (str, int))
+        or (isinstance(raw_message_id, str) and not raw_message_id)
+    ):
+        raise HermesReadError(
+            "invalid message response shape: id must be a non-empty string or integer"
+        )
+    message_id = str(raw_message_id)
     role = _required_string(payload, "role", "message")
     content = payload.get("display_content", payload.get("content"))
     if not isinstance(content, str):
