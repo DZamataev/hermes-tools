@@ -117,6 +117,32 @@ print -r -- "API_SERVER_KEY=$TEST_SECRET" > "$TEST_TMP/hermes.env"
 FAKE_CALLS="$TEST_TMP/calls"
 FAKE_DOCKER_COUNTER="$TEST_TMP/docker-counter"
 export FAKE_CALLS FAKE_DOCKER_COUNTER
+
+# A relocated runner must operate on the checkout that contains it when no
+# project override is supplied. This protects linked Git worktrees from
+# silently controlling the primary checkout's Compose stack.
+DEFAULT_PROJECT="$TEST_TMP/default-project"
+mkdir -p "$DEFAULT_PROJECT/runner"
+cp "$STACK" "$DEFAULT_PROJECT/runner/stack.sh"
+cp "$ROOT/compose.yaml" "$DEFAULT_PROJECT/compose.yaml"
+cp "$TEST_TMP/project/.env.local" "$DEFAULT_PROJECT/.env.local"
+DEFAULT_PROJECT_REAL="$(cd "$DEFAULT_PROJECT" && pwd -P)"
+: > "$FAKE_CALLS"
+(
+  unset HERMES_WEBUI_PROJECT_DIR HERMES_WEBUI_LOCAL_ENV_FILE HERMES_WEBUI_LOG_FILE
+  export HERMES_WEBUI_ENV_FILE="$TEST_TMP/hermes.env"
+  export HERMES_WEBUI_DOCKER_BIN="$TEST_TMP/bin/docker"
+  export HERMES_WEBUI_OPEN_BIN="$TEST_TMP/bin/open"
+  export HERMES_WEBUI_CURL_BIN="$TEST_TMP/bin/curl"
+  export HERMES_WEBUI_SLEEP_BIN="$TEST_TMP/bin/sleep"
+  "$DEFAULT_PROJECT/runner/stack.sh" status \
+    >"$TEST_TMP/default-project.stdout" 2>"$TEST_TMP/default-project.stderr"
+) || fail "status should use the runner's own checkout by default"
+default_calls=$(<"$FAKE_CALLS")
+default_prefix="compose --env-file $TEST_TMP/hermes.env --env-file $DEFAULT_PROJECT_REAL/.env.local -f $DEFAULT_PROJECT_REAL/compose.yaml"
+assert_contains "$default_calls" "$default_prefix config --services"
+assert_contains "$default_calls" "$default_prefix ps --services --status running"
+
 export HERMES_WEBUI_PROJECT_DIR="$TEST_TMP/project"
 export HERMES_WEBUI_ENV_FILE="$TEST_TMP/hermes.env"
 export HERMES_WEBUI_LOCAL_ENV_FILE="$TEST_TMP/project/.env.local"

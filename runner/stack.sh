@@ -1,7 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 
-PROJECT_DIR="${HERMES_WEBUI_PROJECT_DIR:-/Users/frenzy/dev/hermes/hermes-tools}"
+SCRIPT_DIR="${0:A:h}"
+PROJECT_DIR="${HERMES_WEBUI_PROJECT_DIR:-${SCRIPT_DIR:h}}"
 HERMES_ENV_FILE="${HERMES_WEBUI_ENV_FILE:-/Users/frenzy/.hermes/.env}"
 LOCAL_ENV_FILE="${HERMES_WEBUI_LOCAL_ENV_FILE:-$PROJECT_DIR/.env.local}"
 COMPOSE_FILE="$PROJECT_DIR/compose.yaml"

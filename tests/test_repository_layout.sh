@@ -72,9 +72,6 @@ grep -Eq '^ENV NODE_OPTIONS="--max-old-space-size=4096"$' \
 [[ "$(git -C "$ROOT/open-webui" remote get-url origin)" == "git@github.com:DZamataev/open-webui.git" ]] ||
   fail "open-webui origin does not point to the requested fork"
 
-grep -Fq '/Users/frenzy/dev/hermes/hermes-tools' "$ROOT/runner/stack.sh" ||
-  fail "runner default project path does not use the integration repository"
-
 grep -Fq '/Users/frenzy/dev/hermes/hermes-tools/runner/stack.sh' \
   "$ROOT/runner/HermesWebUIRunner.applescript" ||
   fail "AppleScript still points outside the integration repository"
