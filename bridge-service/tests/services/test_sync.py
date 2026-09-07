@@ -274,6 +274,63 @@ async def test_full_scan_isolates_one_failing_chat_and_tracks_safe_failure():
     assert sync.status_snapshot()["components"]["hermes_read_api"] == "ready"
 
 
+async def test_one_observer_fans_out_approval_events_and_keeps_normal_ingest():
+    from services.test_approvals import RECORD, ROUTE
+    from hermes_bridge.connector.protocol import ApprovalRequestFrame
+
+    calls = []
+
+    class Approvals:
+        async def start(self): calls.append("start")
+        async def close(self): calls.append("close")
+        def connector_connected(self): calls.append("connect")
+        async def handle_connector_event(self, frame, **kwargs): calls.append(frame)
+        async def retry_buffered(self): calls.append("retry")
+
+    sync, hermes, mirror, mappings, operations, connector, queue = service()
+    sync = SyncService(hermes, mirror, mappings, operations, FakeEvents(), connector, queue,
+                       interval_seconds=1000, approvals=Approvals())
+    await sync.start()
+    try:
+        assert calls[0] == "start"
+        connector.connection_listener(None)
+        hint = ApprovalRequestFrame(id="hint", correlation_id="hint", sent_at=utc_now(),
+                                    payload={**RECORD, "route": ROUTE})
+        connector.event_listener(hint)
+        for _ in range(30): await asyncio.sleep(0)
+        assert "connect" in calls
+        assert hint in calls
+        assert "retry" in calls
+        assert mirror.verified
+    finally:
+        await sync.close()
+    assert calls[-1] == "close"
+    assert connector.event_listener is None
+
+
+async def test_inventory_scan_requests_are_coalesced_while_scan_is_active():
+    sync, hermes, mirror, *_ = service()
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = mirror.verify
+    count = 0
+
+    async def blocked_verify():
+        nonlocal count
+        count += 1
+        entered.set()
+        await release.wait()
+        await original()
+
+    mirror.verify = blocked_verify
+    sync.request_scan()
+    await entered.wait()
+    for _ in range(10): sync.request_scan()
+    release.set()
+    for _ in range(30): await asyncio.sleep(0)
+    assert count == 1
+    await sync.close()
+
+
 async def test_full_scan_isolates_a_failing_second_mapping_write():
     sessions = [
         HermesSession(f"tip-root-{index}", f"root-{index}", str(index))

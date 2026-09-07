@@ -11,6 +11,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from hermes_bridge.connector.protocol import (
+    ApprovalRequestFrame,
+    ApprovalResolvedFrame,
+    ApprovalSnapshotFrame,
     CommandErrorFrame,
     ConnectorEvent,
     HermesEventFrame,
@@ -104,6 +107,7 @@ class SyncService:
         interval_seconds: float,
         event_queue_size: int = 256,
         replay_timeout_seconds: float = 65.0,
+        approvals: Any | None = None,
     ) -> None:
         self._hermes = hermes
         self._mirror = mirror
@@ -112,6 +116,8 @@ class SyncService:
         self._events = events
         self._connector = connector
         self._queue = queue
+        self._approvals = approvals
+        self._requested_scan_task: asyncio.Task | None = None
         self._interval = interval_seconds
         self._replay_timeout = replay_timeout_seconds
         self._event_queue: asyncio.Queue[ConnectorEvent] = asyncio.Queue(event_queue_size)
@@ -139,6 +145,8 @@ class SyncService:
     async def start(self) -> None:
         if self._closed or self._periodic_task is not None:
             return
+        if self._approvals is not None:
+            await self._approvals.start()
         self._connector.set_observer(
             on_connect=self._connector_connected,
             on_event=self._connector_event,
@@ -157,6 +165,15 @@ class SyncService:
         self._tasks.clear()
         self._periodic_task = None
         self._event_task = None
+        if self._approvals is not None:
+            await self._approvals.close()
+
+    def request_scan(self) -> None:
+        """Coalesce inventory repair hints into one normal scan."""
+        if not self._closed and not self._scan_lock.locked() and (
+            self._requested_scan_task is None or self._requested_scan_task.done()
+        ):
+            self._requested_scan_task = self._spawn(self.full_scan())
 
     def _spawn(self, awaitable) -> asyncio.Task:
         task = asyncio.create_task(awaitable)
@@ -184,6 +201,8 @@ class SyncService:
 
     def _connector_connected(self, _hello: object) -> None:
         if not self._closed:
+            if self._approvals is not None:
+                self._approvals.connector_connected()
             self._spawn(self._recover_then_scan())
 
     async def _recover_then_scan(self) -> None:
@@ -312,6 +331,8 @@ class SyncService:
 
             self._last_scan = datetime.now(timezone.utc)
             await self._refresh_operation_counts()
+            if self._approvals is not None:
+                await self._approvals.retry_buffered()
             return SyncReport(succeeded, len(failures), skipped, tuple(failures))
 
     async def _verify_openwebui(self) -> None | Exception:
@@ -359,6 +380,10 @@ class SyncService:
         return result
 
     async def handle_connector_event(self, frame: ConnectorEvent) -> None:
+        if isinstance(frame, (ApprovalRequestFrame, ApprovalSnapshotFrame, ApprovalResolvedFrame)):
+            if self._approvals is not None:
+                await self._approvals.handle_connector_event(frame, from_observer=True)
+            return
         if not isinstance(frame, HermesEventFrame):
             return
         normalized = normalize_event(frame, connector_epoch=self._connector.epoch)
