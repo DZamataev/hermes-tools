@@ -1,6 +1,7 @@
 const PROTOCOL_VERSION = 1
-const CONNECTOR_VERSION = '1.1.0'
-const CONNECTOR_CAPABILITIES = ['replay_complete']
+const CONNECTOR_VERSION = '1.2.0'
+const CONNECTOR_CAPABILITIES = ['replay_complete', 'approvals_v1']
+const APPROVAL_CHOICES = new Set(['once', 'session', 'always', 'deny'])
 const HEARTBEAT_INTERVAL_MS = 5_000
 const REQUEST_TIMEOUT_MS = 60_000
 const MAX_FRAME_BYTES = 1024 * 1024
@@ -15,6 +16,7 @@ const FORWARDED_EVENTS = new Set([
   'tool.complete',
   'message.complete',
   'session.info',
+  'approval.request',
   'error'
 ])
 
@@ -57,6 +59,22 @@ function eventData(payload) {
 
 function safeString(value) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function sanitizeApproval(raw, session = {}) {
+  const choices = Array.isArray(raw?.choices)
+    ? [...new Set(raw.choices.filter(choice => APPROVAL_CHOICES.has(choice)))]
+    : []
+  return {
+    runtime_session_id: safeString(raw?.runtime_session_id || session.runtime_session_id),
+    stored_session_id: safeString(raw?.stored_session_id || session.stored_session_id),
+    request_id: safeString(raw?.request_id),
+    description: safeString(raw?.description),
+    command: safeString(raw?.command),
+    allow_permanent: raw?.allow_permanent === true,
+    smart_denied: raw?.smart_denied === true,
+    choices: choices.filter(choice => choice !== 'always' || raw?.allow_permanent === true)
+  }
 }
 
 function isTransportFailure(error) {
@@ -116,6 +134,8 @@ export function createConnector({
   let sequence = 0
   let routes = []
   const activeBySession = new Map()
+  const scansByRoute = new Map()
+  const approvalsByIdentity = new Map()
 
   function frame(kind, correlationId, payload) {
     return {
@@ -169,6 +189,32 @@ export function createConnector({
     return routes.find(candidate => routesEqual(candidate.wire, wireRoute)) || null
   }
 
+  function routeKeyParts(route) {
+    return [
+      route.wire.connection_id,
+      route.wire.profile,
+      route.wire.target_profile
+    ]
+  }
+
+  function scanKey(route) {
+    return JSON.stringify(routeKeyParts(route))
+  }
+
+  function approvalKey(route, approval) {
+    return JSON.stringify([
+      ...routeKeyParts(route),
+      approval.runtime_session_id,
+      approval.stored_session_id,
+      approval.request_id
+    ])
+  }
+
+  function rememberApproval(route, approval) {
+    if (!approval.runtime_session_id || !approval.stored_session_id || !approval.request_id) return
+    approvalsByIdentity.set(approvalKey(route, approval), { ...approval, route })
+  }
+
   function routeForEvent(event) {
     const profile = safeString(event?.profile)
     const connectionId = safeString(event?.connectionId)
@@ -200,9 +246,30 @@ export function createConnector({
     )
   }
 
+  function emitApprovalRequest(event, route, target = socket) {
+    const approval = sanitizeApproval(event?.payload, {
+      runtime_session_id: event?.session_id
+    })
+    if (!approval.runtime_session_id || !approval.request_id) return false
+    rememberApproval(route, approval)
+    const seq = Number.isInteger(event?.seq) && event.seq >= 0 ? event.seq : null
+    return send(
+      target,
+      frame('approval_request', null, {
+        route: route.wire,
+        ...approval,
+        seq
+      })
+    )
+  }
+
   function handleHostEvent(event) {
     const route = routeForEvent(event)
     if (!route) return
+    if (event?.type === 'approval.request') {
+      emitApprovalRequest(event, route)
+      return
+    }
     const sessionId = safeString(event?.session_id)
     const operation = activeBySession.get(sessionId)
     if (operation && operation.route !== route) return
@@ -395,12 +462,170 @@ export function createConnector({
     }
   }
 
+  async function scanRoute(route) {
+    const key = scanKey(route)
+    const existing = scansByRoute.get(key)
+    if (existing) return existing
+
+    const scan = (async () => {
+      const active = await host.requestProfile(
+        route.sdk,
+        'session.active_list',
+        {},
+        REQUEST_TIMEOUT_MS
+      )
+      if (!Array.isArray(active?.sessions)) {
+        throw new Error('Hermes active session list is invalid')
+      }
+      const sessions = active.sessions
+        .filter(session => session?.status === 'waiting')
+        .map(session => {
+          const runtimeSessionId = safeString(session?.id)
+          const storedSessionId = safeString(session?.session_key)
+          if (!runtimeSessionId || !storedSessionId) {
+            throw new Error('Hermes waiting session is invalid')
+          }
+          return {
+            runtime_session_id: runtimeSessionId,
+            stored_session_id: storedSessionId,
+            status: 'waiting'
+          }
+        })
+      const approvals = []
+      for (const session of sessions) {
+        const pending = await host.requestProfile(
+          route.sdk,
+          'approval.pending',
+          { session_id: session.runtime_session_id },
+          REQUEST_TIMEOUT_MS
+        )
+        if (!Array.isArray(pending?.approvals)) {
+          throw new Error('Hermes pending approvals are invalid')
+        }
+        for (const raw of pending.approvals) {
+          const approval = sanitizeApproval(raw, session)
+          if (!approval.runtime_session_id || !approval.stored_session_id || !approval.request_id) {
+            throw new Error('Hermes pending approval is invalid')
+          }
+          approvals.push(approval)
+        }
+      }
+      for (const approval of approvals) rememberApproval(route, approval)
+      return { approvals, sessions }
+    })()
+    scansByRoute.set(key, scan)
+    try {
+      return await scan
+    } finally {
+      if (scansByRoute.get(key) === scan) scansByRoute.delete(key)
+    }
+  }
+
+  async function handleApprovalScan(command, target) {
+    const payload = command?.payload || {}
+    const operationId = safeString(payload.operation_id)
+    const route = routeForWire(payload.route)
+    if (!operationId) {
+      commandError(target, command, 'invalid_approval_scan', 'Invalid approval scan command', false)
+      return
+    }
+    if (!route) {
+      commandError(target, command, 'route_unavailable', 'Hermes profile route is unavailable', false)
+      return
+    }
+    try {
+      const snapshot = await scanRoute(route)
+      send(
+        target,
+        frame('approval_snapshot', command.correlation_id, {
+          operation_id: operationId,
+          route: route.wire,
+          sessions: snapshot.sessions,
+          approvals: snapshot.approvals
+        })
+      )
+    } catch {
+      commandError(target, command, 'approval_scan_failed', 'Hermes approval scan failed', false)
+    }
+  }
+
+  async function handleResolveApproval(command, target) {
+    const payload = command?.payload || {}
+    const operationId = safeString(payload.operation_id)
+    const approvalId = safeString(payload.approval_id)
+    const runtimeSessionId = safeString(payload.runtime_session_id)
+    const storedSessionId = safeString(payload.stored_session_id)
+    const requestId = safeString(payload.request_id)
+    const choice = safeString(payload.choice)
+    const route = routeForWire(payload.route)
+    if (!operationId || !approvalId || !runtimeSessionId || !storedSessionId || !requestId || !choice) {
+      commandError(target, command, 'invalid_resolve_approval', 'Invalid approval resolution command', false)
+      return
+    }
+    if (!route) {
+      commandError(target, command, 'route_unavailable', 'Hermes profile route is unavailable', false)
+      return
+    }
+    const key = approvalKey(route, {
+      runtime_session_id: runtimeSessionId,
+      stored_session_id: storedSessionId,
+      request_id: requestId
+    })
+    const approval = approvalsByIdentity.get(key)
+    if (!approval) {
+      commandError(target, command, 'approval_not_found', 'Hermes approval is unavailable', false)
+      return
+    }
+    if (
+      !APPROVAL_CHOICES.has(choice) ||
+      !approval.choices.includes(choice) ||
+      (choice === 'always' && approval.allow_permanent !== true)
+    ) {
+      commandError(target, command, 'invalid_approval_choice', 'Approval choice is unavailable', false)
+      return
+    }
+    try {
+      const response = await host.requestProfile(
+        route.sdk,
+        'approval.respond',
+        { session_id: runtimeSessionId, request_id: requestId, choice },
+        REQUEST_TIMEOUT_MS
+      )
+      if (response?.status === 'rejected' || response?.accepted === false) {
+        approvalsByIdentity.delete(key)
+        commandError(target, command, 'approval_stale', 'Hermes approval is no longer pending', false)
+        return
+      }
+      approvalsByIdentity.delete(key)
+      send(
+        target,
+        frame('approval_resolved', command.correlation_id, {
+          operation_id: operationId,
+          approval_id: approvalId,
+          choice,
+          accepted: true
+        })
+      )
+    } catch (error) {
+      if (isTransportFailure(error)) {
+        commandError(target, command, 'approval_resolve_failed', 'Hermes approval response failed', true)
+        return
+      }
+      approvalsByIdentity.delete(key)
+      commandError(target, command, 'approval_stale', 'Hermes approval is no longer pending', false)
+    }
+  }
+
   async function handleCommand(command, target = socket) {
     if (!command || command.protocol !== PROTOCOL_VERSION) return
     if (command.kind === 'submit') {
       await handleSubmit(command, target)
     } else if (command.kind === 'replay') {
       await handleReplay(command, target)
+    } else if (command.kind === 'approval_scan') {
+      await handleApprovalScan(command, target)
+    } else if (command.kind === 'resolve_approval') {
+      await handleResolveApproval(command, target)
     }
   }
 

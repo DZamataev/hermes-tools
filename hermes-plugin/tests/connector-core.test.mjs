@@ -215,8 +215,8 @@ test('valid challenge response signs nonce and advertises snake-case routes', as
   assert.ok(hello)
   assert.equal(hello.protocol, 1)
   assert.equal(hello.correlation_id, 'command-challenge-1')
-  assert.equal(hello.payload.connector_version, '1.1.0')
-  assert.deepEqual(hello.payload.capabilities, ['replay_complete'])
+  assert.equal(hello.payload.connector_version, '1.2.0')
+  assert.deepEqual(hello.payload.capabilities, ['replay_complete', 'approvals_v1'])
   assert.deepEqual(hello.payload.routes, [WIRE_ROUTE])
   const expected = createHmac('sha256', SECRET)
     .update(`nonce-1\n${hello.payload.timestamp}`)
@@ -488,5 +488,269 @@ test('an unknown bridge command cannot select an arbitrary Hermes RPC', async ()
   const { connector, host, socket } = await connect()
   await socket.receive(command('rpc', { method: 'config.set', params: {} }))
   assert.equal(host.calls.length, 0)
+  connector.stop()
+})
+
+test('approval.request is forwarded with only the approved redacted fields', async () => {
+  const { connector, host, socket } = await connect()
+  host.emit({
+    connectionId: 'local', profile: 'default', session_id: 'runtime-1', seq: 17,
+    type: 'approval.request',
+    payload: {
+      request_id: 'request-1', stored_session_id: 'stored-1',
+      description: 'Run a command', command: 'git status',
+      allow_permanent: true, smart_denied: false,
+      choices: ['once', 'session', 'always', 'deny'], secret_argument: 'must-not-cross'
+    }
+  })
+  await Promise.resolve()
+  assert.deepEqual(frames(socket, 'approval_request')[0].payload, {
+    route: WIRE_ROUTE, runtime_session_id: 'runtime-1', stored_session_id: 'stored-1',
+    seq: 17, request_id: 'request-1', description: 'Run a command',
+    command: 'git status', allow_permanent: true, smart_denied: false,
+    choices: ['once', 'session', 'always', 'deny']
+  })
+  assert.equal(JSON.stringify(socket.sent).includes('secret_argument'), false)
+  connector.stop()
+})
+
+test('overlapping approval scans share a bounded waiting-session snapshot', async () => {
+  const activeSessions = deferred()
+  const host = fakeHost({
+    async requestProfile(route, method, params, timeout) {
+      host.calls.push([method, route, params, timeout])
+      if (method === 'session.active_list') return activeSessions.promise
+      if (method === 'approval.pending') {
+        return {
+          approvals: [{
+            request_id: 'request-1', description: 'Run a command', command: 'git status',
+            allow_permanent: true, smart_denied: false,
+            choices: ['once', 'session', 'always', 'deny'], secret_argument: 'must-not-cross'
+          }]
+        }
+      }
+      throw new Error(`unexpected RPC: ${method}`)
+    }
+  })
+  const { connector, socket } = await connect({ host })
+  const first = socket.receive(command('approval_scan', {
+    operation_id: 'approval-operation-1', route: WIRE_ROUTE
+  }, 'approval-scan-1'))
+  await Promise.resolve()
+  const second = socket.receive(command('approval_scan', {
+    operation_id: 'approval-operation-2', route: WIRE_ROUTE
+  }, 'approval-scan-2'))
+  await Promise.resolve()
+  assert.deepEqual(host.calls.map(([method]) => method), ['session.active_list'])
+  activeSessions.resolve({
+    sessions: [
+      { id: 'runtime-waiting', session_key: 'stored-waiting', status: 'waiting', messages: ['must-not-cross'] },
+      { id: 'runtime-running', session_key: 'stored-running', status: 'running' }
+    ]
+  })
+  await Promise.all([first, second])
+  assert.deepEqual(host.calls.map(([method]) => method), [
+    'session.active_list', 'approval.pending'
+  ])
+  assert.deepEqual(host.calls[1], [
+    'approval.pending', SDK_ROUTE, { session_id: 'runtime-waiting' }, 60_000
+  ])
+  const snapshots = frames(socket, 'approval_snapshot')
+  assert.equal(snapshots.length, 2)
+  assert.deepEqual(snapshots.map(snapshot => snapshot.correlation_id), [
+    'approval-scan-1', 'approval-scan-2'
+  ])
+  for (const snapshot of snapshots) {
+    assert.deepEqual(snapshot.payload, {
+      operation_id: snapshot.correlation_id === 'approval-scan-1'
+        ? 'approval-operation-1'
+        : 'approval-operation-2',
+      route: WIRE_ROUTE,
+      sessions: [
+        { runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting', status: 'waiting' }
+      ],
+      approvals: [{
+        runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting',
+        request_id: 'request-1', description: 'Run a command', command: 'git status',
+        allow_permanent: true, smart_denied: false,
+        choices: ['once', 'session', 'always', 'deny']
+      }]
+    })
+  }
+  assert.equal(JSON.stringify(snapshots).includes('secret_argument'), false)
+  connector.stop()
+})
+
+test('approval scan failure is not represented as an empty snapshot', async () => {
+  const host = fakeHost({
+    async requestProfile(route, method, params, timeout) {
+      host.calls.push([method, route, params, timeout])
+      if (method === 'session.active_list') {
+        return { sessions: [{ id: 'runtime-waiting', session_key: 'stored-waiting', status: 'waiting' }] }
+      }
+      if (method === 'approval.pending') throw new Error('Desktop unavailable')
+      throw new Error(`unexpected RPC: ${method}`)
+    }
+  })
+  const { connector, socket } = await connect({ host })
+  await socket.receive(command('approval_scan', {
+    operation_id: 'approval-operation-1', route: WIRE_ROUTE
+  }, 'approval-scan-1'))
+  assert.equal(frames(socket, 'approval_snapshot').length, 0)
+  assert.deepEqual(frames(socket, 'command_error')[0].payload, {
+    operation_id: 'approval-operation-1',
+    code: 'approval_scan_failed',
+    message: 'Hermes approval scan failed',
+    acceptance_unknown: false
+  })
+  connector.stop()
+})
+
+test('resolve_approval calls the fixed Hermes responder for every advertised choice', async () => {
+  for (const choice of ['once', 'session', 'always', 'deny']) {
+    const host = fakeHost({
+      async requestProfile(route, method, params, timeout) {
+        host.calls.push([method, route, params, timeout])
+        if (method === 'approval.respond') return { status: 'accepted' }
+        throw new Error(`unexpected RPC: ${method}`)
+      }
+    })
+    const { connector, socket } = await connect({ host })
+    host.emit({
+      connectionId: 'local', profile: 'default', session_id: 'runtime-waiting',
+      type: 'approval.request',
+      payload: {
+        request_id: 'request-1', stored_session_id: 'stored-waiting',
+        description: 'Run a command', command: 'git status', allow_permanent: true,
+        smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+      }
+    })
+    await Promise.resolve()
+    await socket.receive(command('resolve_approval', {
+      operation_id: 'approval-operation-1', approval_id: 'bridge-approval-1',
+      route: WIRE_ROUTE, runtime_session_id: 'runtime-waiting',
+      stored_session_id: 'stored-waiting', request_id: 'request-1', choice
+    }, `resolve-${choice}`))
+    assert.deepEqual(host.calls.at(-1), [
+      'approval.respond', SDK_ROUTE,
+      { session_id: 'runtime-waiting', request_id: 'request-1', choice },
+      60_000
+    ])
+    assert.deepEqual(frames(socket, 'approval_resolved')[0].payload, {
+      operation_id: 'approval-operation-1', approval_id: 'bridge-approval-1',
+      choice, accepted: true
+    })
+    connector.stop()
+  }
+})
+
+test('resolve_approval rejects an unretained route, identity, or choice before Hermes RPC', async () => {
+  const { connector, host, socket } = await connect()
+  host.emit({
+    connectionId: 'local', profile: 'default', session_id: 'runtime-waiting',
+    type: 'approval.request',
+    payload: {
+      request_id: 'request-1', stored_session_id: 'stored-waiting',
+      description: 'Run a command', command: 'git status', allow_permanent: false,
+      smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+    }
+  })
+  await Promise.resolve()
+  const cases = [
+    {
+      label: 'route', route: { ...WIRE_ROUTE, target_profile: 'missing' },
+      runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting',
+      request_id: 'request-1', choice: 'once', code: 'route_unavailable'
+    },
+    {
+      label: 'identity', route: WIRE_ROUTE, runtime_session_id: 'runtime-waiting',
+      stored_session_id: 'stored-waiting', request_id: 'other-request', choice: 'once',
+      code: 'approval_not_found'
+    },
+    {
+      label: 'choice', route: WIRE_ROUTE, runtime_session_id: 'runtime-waiting',
+      stored_session_id: 'stored-waiting', request_id: 'request-1', choice: 'unsafe',
+      code: 'invalid_approval_choice'
+    },
+    {
+      label: 'permanent', route: WIRE_ROUTE, runtime_session_id: 'runtime-waiting',
+      stored_session_id: 'stored-waiting', request_id: 'request-1', choice: 'always',
+      code: 'invalid_approval_choice'
+    }
+  ]
+  for (const testCase of cases) {
+    const { code, label, ...payload } = testCase
+    await socket.receive(command('resolve_approval', {
+      operation_id: `approval-operation-${label}`,
+      approval_id: 'bridge-approval-1',
+      ...payload
+    }, `resolve-${label}`))
+    assert.equal(frames(socket, 'command_error').at(-1).payload.code, code)
+  }
+  assert.equal(host.calls.length, 0)
+  connector.stop()
+})
+
+test('a stale Hermes approval response is reported without transport uncertainty', async () => {
+  const host = fakeHost({
+    async requestProfile(route, method, params, timeout) {
+      host.calls.push([method, route, params, timeout])
+      if (method === 'approval.respond') throw new Error('approval request is no longer pending')
+      throw new Error(`unexpected RPC: ${method}`)
+    }
+  })
+  const { connector, socket } = await connect({ host })
+  host.emit({
+    connectionId: 'local', profile: 'default', session_id: 'runtime-waiting',
+    type: 'approval.request',
+    payload: {
+      request_id: 'request-1', stored_session_id: 'stored-waiting',
+      description: 'Run a command', command: 'git status', allow_permanent: true,
+      smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+    }
+  })
+  await Promise.resolve()
+  await socket.receive(command('resolve_approval', {
+    operation_id: 'approval-operation-1', approval_id: 'bridge-approval-1', route: WIRE_ROUTE,
+    runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting',
+    request_id: 'request-1', choice: 'deny'
+  }))
+  assert.deepEqual(frames(socket, 'command_error')[0].payload, {
+    operation_id: 'approval-operation-1', code: 'approval_stale',
+    message: 'Hermes approval is no longer pending', acceptance_unknown: false
+  })
+  connector.stop()
+})
+
+test('a transport failure after offering an approval reports uncertainty', async () => {
+  const host = fakeHost({
+    async requestProfile(route, method, params, timeout) {
+      host.calls.push([method, route, params, timeout])
+      if (method === 'approval.respond') {
+        throw new DOMException('WebSocket closed after request write', 'NetworkError')
+      }
+      throw new Error(`unexpected RPC: ${method}`)
+    }
+  })
+  const { connector, socket } = await connect({ host })
+  host.emit({
+    connectionId: 'local', profile: 'default', session_id: 'runtime-waiting',
+    type: 'approval.request',
+    payload: {
+      request_id: 'request-1', stored_session_id: 'stored-waiting',
+      description: 'Run a command', command: 'git status', allow_permanent: true,
+      smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+    }
+  })
+  await Promise.resolve()
+  await socket.receive(command('resolve_approval', {
+    operation_id: 'approval-operation-1', approval_id: 'bridge-approval-1', route: WIRE_ROUTE,
+    runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting',
+    request_id: 'request-1', choice: 'deny'
+  }))
+  assert.deepEqual(frames(socket, 'command_error')[0].payload, {
+    operation_id: 'approval-operation-1', code: 'approval_resolve_failed',
+    message: 'Hermes approval response failed', acceptance_unknown: true
+  })
   connector.stop()
 })
