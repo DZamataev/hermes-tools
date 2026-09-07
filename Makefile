@@ -14,6 +14,7 @@ install-plugin:
 
 test:
 	/bin/zsh tests/test_repository_layout.sh
+	/bin/zsh tests/test_plugin_install.sh
 	/bin/zsh runner/tests/test_stack.sh
 
 bridge-stack-test:

@@ -15,6 +15,9 @@ read_exact_assignment() {
     index($0, name "=") == 1 {
       count += 1
       value = substr($0, length(name) + 2)
+      if ((value ~ /^\047.*\047$/) || (value ~ /^".*"$/)) {
+        value = substr(value, 2, length(value) - 2)
+      }
     }
     END {
       if (count != 1 || value == "") exit 1
