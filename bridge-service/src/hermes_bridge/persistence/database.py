@@ -87,6 +87,33 @@ class Database:
                 connector_epoch TEXT,
                 occurred_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS pending_approval (
+                approval_id TEXT PRIMARY KEY,
+                connection_id TEXT NOT NULL,
+                profile TEXT NOT NULL,
+                target_profile TEXT NOT NULL,
+                lineage_key TEXT NOT NULL,
+                chat_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                stored_session_id TEXT NOT NULL,
+                runtime_session_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                command TEXT NOT NULL,
+                description TEXT NOT NULL,
+                choices TEXT NOT NULL,
+                state TEXT NOT NULL,
+                resolved_choice TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(connection_id, profile, target_profile, stored_session_id, request_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS pending_approval_route_state
+            ON pending_approval(connection_id, profile, target_profile, state);
+
+            CREATE INDEX IF NOT EXISTS pending_approval_lineage_state
+            ON pending_approval(lineage_key, state);
             """
         )
         cursor = await self._connection.execute("PRAGMA table_info(operation)")

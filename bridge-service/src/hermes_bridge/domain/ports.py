@@ -6,8 +6,10 @@ from typing import Protocol
 from uuid import UUID
 
 from hermes_bridge.domain.models import (
+    ApprovalState,
     Operation,
     OperationState,
+    PendingApproval,
     SessionIdentity,
     SessionMapping,
     TurnEvent,
@@ -61,3 +63,29 @@ class OperationStore(Protocol):
 
 class EventStore(Protocol):
     async def record(self, event: TurnEvent) -> bool: ...
+
+
+class ApprovalStore(Protocol):
+    async def upsert_pending(self, approval: PendingApproval) -> PendingApproval: ...
+
+    async def get(self, approval_id: str) -> PendingApproval | None: ...
+
+    async def by_route_request(
+        self, connection_id: str, profile: str, target_profile: str,
+        stored_session_id: str, request_id: str,
+    ) -> PendingApproval | None: ...
+
+    async def list_for_route(
+        self, connection_id: str, profile: str, target_profile: str,
+    ) -> list[PendingApproval]: ...
+
+    async def list_reconcilable(self) -> list[PendingApproval]: ...
+
+    async def transition(
+        self, approval_id: str, expected: frozenset[ApprovalState], target: ApprovalState,
+        *, resolved_choice: str | None = None,
+    ) -> PendingApproval: ...
+
+    async def recover_in_flight(self) -> int: ...
+
+    async def count_by_state(self) -> dict[str, int]: ...

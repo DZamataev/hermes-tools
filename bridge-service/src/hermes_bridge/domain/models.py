@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -62,6 +63,79 @@ VALID_TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
 
 def transition_is_valid(current: OperationState, target: OperationState) -> bool:
     return target in VALID_TRANSITIONS[current]
+
+
+class ApprovalState(StrEnum):
+    PENDING = "pending"
+    RESOLVING = "resolving"
+    DELIVERY_UNCERTAIN = "delivery_uncertain"
+    RESOLVED = "resolved"
+    RESOLVED_EXTERNAL = "resolved_external"
+    EXPIRED = "expired"
+
+
+APPROVAL_TRANSITIONS: dict[ApprovalState, frozenset[ApprovalState]] = {
+    ApprovalState.PENDING: frozenset({
+        ApprovalState.RESOLVING, ApprovalState.RESOLVED_EXTERNAL, ApprovalState.EXPIRED,
+    }),
+    ApprovalState.RESOLVING: frozenset({
+        ApprovalState.RESOLVED, ApprovalState.PENDING, ApprovalState.DELIVERY_UNCERTAIN,
+    }),
+    ApprovalState.DELIVERY_UNCERTAIN: frozenset({
+        ApprovalState.PENDING, ApprovalState.RESOLVED, ApprovalState.RESOLVED_EXTERNAL,
+    }),
+    ApprovalState.RESOLVED: frozenset(),
+    ApprovalState.RESOLVED_EXTERNAL: frozenset(),
+    ApprovalState.EXPIRED: frozenset(),
+}
+
+
+def approval_transition_is_valid(current: ApprovalState, target: ApprovalState) -> bool:
+    return target in APPROVAL_TRANSITIONS[current]
+
+
+def stable_approval_id(
+    connection_id: str, profile: str, target_profile: str,
+    lineage_root_id: str, request_id: str,
+) -> str:
+    material = "\x1f".join((
+        "hermes-approval-v1", connection_id, profile, target_profile,
+        lineage_root_id, request_id,
+    )).encode()
+    return f"ha_{hashlib.sha256(material).hexdigest()[:32]}"
+
+
+@dataclass(frozen=True)
+class PendingApproval:
+    id: str
+    connection_id: str
+    profile: str
+    target_profile: str
+    lineage_key: str
+    chat_id: str
+    message_id: str
+    stored_session_id: str
+    runtime_session_id: str
+    request_id: str
+    command: str
+    description: str
+    choices: tuple[str, ...]
+    state: ApprovalState
+    created_at: datetime
+    updated_at: datetime
+    resolved_choice: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "created_at", _as_utc(self.created_at))
+        object.__setattr__(self, "updated_at", _as_utc(self.updated_at))
+        choices = tuple(self.choices)
+        if (
+            not choices
+            or len(set(choices)) != len(choices)
+            or not set(choices) <= {"once", "session", "always", "deny"}
+        ):
+            raise ValueError("choices must be a nonempty unique set of approval choices")
+        object.__setattr__(self, "choices", choices)
 
 
 @dataclass(frozen=True)

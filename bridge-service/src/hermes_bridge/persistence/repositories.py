@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from uuid import UUID, uuid4
 
 import aiosqlite
 
 from hermes_bridge.domain.models import (
+    ApprovalState,
     InvalidTransition,
     Operation,
     OperationState,
+    PendingApproval,
     SessionIdentity,
     SessionMapping,
     TurnEvent,
     TurnRequest,
+    approval_transition_is_valid,
     transition_is_valid,
     utc_now,
 )
@@ -27,6 +31,28 @@ def _timestamp(value: datetime) -> str:
 
 def _read_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+def _approval(row: aiosqlite.Row) -> PendingApproval:
+    return PendingApproval(
+        id=row["approval_id"],
+        connection_id=row["connection_id"],
+        profile=row["profile"],
+        target_profile=row["target_profile"],
+        lineage_key=row["lineage_key"],
+        chat_id=row["chat_id"],
+        message_id=row["message_id"],
+        stored_session_id=row["stored_session_id"],
+        runtime_session_id=row["runtime_session_id"],
+        request_id=row["request_id"],
+        command=row["command"],
+        description=row["description"],
+        choices=tuple(json.loads(row["choices"])),
+        state=ApprovalState(row["state"]),
+        resolved_choice=row["resolved_choice"],
+        created_at=_read_timestamp(row["created_at"]),
+        updated_at=_read_timestamp(row["updated_at"]),
+    )
 
 
 def _mapping(row: aiosqlite.Row) -> SessionMapping:
@@ -64,6 +90,188 @@ def _operation(row: aiosqlite.Row) -> Operation:
         updated_at=_read_timestamp(row["updated_at"]),
         runtime_session_id=row["runtime_session_id"],
     )
+
+
+class ApprovalRepository:
+    def __init__(self, database: Database) -> None:
+        self._database = database
+
+    async def upsert_pending(self, approval: PendingApproval) -> PendingApproval:
+        if approval.state is not ApprovalState.PENDING or approval.resolved_choice is not None:
+            raise ValueError("upsert requires a pending approval without a resolved choice")
+        async with self._database.write_transaction(immediate=True) as connection:
+            cursor = await connection.execute(
+                """
+                SELECT * FROM pending_approval
+                WHERE approval_id = ? OR (
+                    connection_id = ? AND profile = ? AND target_profile = ?
+                    AND stored_session_id = ? AND request_id = ?
+                )
+                """,
+                (approval.id, approval.connection_id, approval.profile,
+                 approval.target_profile, approval.stored_session_id, approval.request_id),
+            )
+            rows = await cursor.fetchall()
+            if rows:
+                current = _approval(rows[0])
+                identity_fields = (
+                    "id", "connection_id", "profile", "target_profile", "lineage_key",
+                    "stored_session_id", "request_id",
+                )
+                if len(rows) != 1 or any(
+                    getattr(current, name) != getattr(approval, name)
+                    for name in identity_fields
+                ):
+                    raise ValueError("approval identity conflicts with an existing record")
+                if current.state is not ApprovalState.PENDING:
+                    return current
+                metadata = (
+                    "chat_id", "message_id", "runtime_session_id", "command",
+                    "description", "choices",
+                )
+                if all(getattr(current, name) == getattr(approval, name) for name in metadata):
+                    return current
+                await connection.execute(
+                    """
+                    UPDATE pending_approval
+                    SET chat_id = ?, message_id = ?, runtime_session_id = ?, command = ?,
+                        description = ?, choices = ?, updated_at = ?
+                    WHERE approval_id = ?
+                    """,
+                    (approval.chat_id, approval.message_id, approval.runtime_session_id,
+                     approval.command, approval.description, json.dumps(approval.choices),
+                     _timestamp(utc_now()), approval.id),
+                )
+            else:
+                await connection.execute(
+                    """
+                    INSERT INTO pending_approval (
+                        approval_id, connection_id, profile, target_profile, lineage_key,
+                        chat_id, message_id, stored_session_id, runtime_session_id,
+                        request_id, command, description, choices, state, resolved_choice,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (approval.id, approval.connection_id, approval.profile,
+                     approval.target_profile, approval.lineage_key, approval.chat_id,
+                     approval.message_id, approval.stored_session_id,
+                     approval.runtime_session_id, approval.request_id, approval.command,
+                     approval.description, json.dumps(approval.choices), approval.state.value,
+                     approval.resolved_choice, _timestamp(approval.created_at),
+                     _timestamp(approval.updated_at)),
+                )
+            cursor = await connection.execute(
+                "SELECT * FROM pending_approval WHERE approval_id = ?", (approval.id,)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        return _approval(row)
+
+    async def get(self, approval_id: str) -> PendingApproval | None:
+        cursor = await self._database.connection.execute(
+            "SELECT * FROM pending_approval WHERE approval_id = ?", (approval_id,)
+        )
+        row = await cursor.fetchone()
+        return _approval(row) if row is not None else None
+
+    async def by_route_request(
+        self, connection_id: str, profile: str, target_profile: str,
+        stored_session_id: str, request_id: str,
+    ) -> PendingApproval | None:
+        cursor = await self._database.connection.execute(
+            """
+            SELECT * FROM pending_approval
+            WHERE connection_id = ? AND profile = ? AND target_profile = ?
+                AND stored_session_id = ? AND request_id = ?
+            """,
+            (connection_id, profile, target_profile, stored_session_id, request_id),
+        )
+        row = await cursor.fetchone()
+        return _approval(row) if row is not None else None
+
+    async def list_for_route(
+        self, connection_id: str, profile: str, target_profile: str,
+    ) -> list[PendingApproval]:
+        cursor = await self._database.connection.execute(
+            """
+            SELECT * FROM pending_approval
+            WHERE connection_id = ? AND profile = ? AND target_profile = ?
+            ORDER BY created_at, approval_id
+            """,
+            (connection_id, profile, target_profile),
+        )
+        return [_approval(row) for row in await cursor.fetchall()]
+
+    async def list_reconcilable(self) -> list[PendingApproval]:
+        cursor = await self._database.connection.execute(
+            """
+            SELECT * FROM pending_approval
+            WHERE state IN ('pending', 'resolving', 'delivery_uncertain')
+            ORDER BY created_at, approval_id
+            """
+        )
+        return [_approval(row) for row in await cursor.fetchall()]
+
+    async def transition(
+        self, approval_id: str, expected: frozenset[ApprovalState], target: ApprovalState,
+        *, resolved_choice: str | None = None,
+    ) -> PendingApproval:
+        async with self._database.write_transaction(immediate=True) as connection:
+            cursor = await connection.execute(
+                "SELECT * FROM pending_approval WHERE approval_id = ?", (approval_id,)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise LookupError("approval does not exist")
+            current = _approval(row)
+            if current.state not in expected or not approval_transition_is_valid(current.state, target):
+                raise InvalidTransition(f"cannot transition {current.state} to {target}")
+            choice = resolved_choice if resolved_choice is not None else current.resolved_choice
+            if choice is not None and choice not in current.choices:
+                raise ValueError("resolution choice is not an advertised choice")
+            if target is ApprovalState.RESOLVED and choice is None:
+                raise ValueError("a resolved approval requires a known choice")
+            if target in {
+                ApprovalState.PENDING, ApprovalState.RESOLVED_EXTERNAL, ApprovalState.EXPIRED,
+            }:
+                choice = None
+            cursor = await connection.execute(
+                """
+                UPDATE pending_approval
+                SET state = ?, resolved_choice = ?, updated_at = ?
+                WHERE approval_id = ? AND state = ?
+                """,
+                (target.value, choice, _timestamp(utc_now()), approval_id, current.state.value),
+            )
+            if cursor.rowcount != 1:
+                raise InvalidTransition("approval state changed before transition")
+            cursor = await connection.execute(
+                "SELECT * FROM pending_approval WHERE approval_id = ?", (approval_id,)
+            )
+            row = await cursor.fetchone()
+        assert row is not None
+        return _approval(row)
+
+    async def recover_in_flight(self) -> int:
+        """Call once at service startup, before scans or resolution controls start."""
+        async with self._database.write_transaction(immediate=True) as connection:
+            cursor = await connection.execute(
+                """
+                UPDATE pending_approval SET state = ?, updated_at = ? WHERE state = ?
+                """,
+                (ApprovalState.DELIVERY_UNCERTAIN.value, _timestamp(utc_now()),
+                 ApprovalState.RESOLVING.value),
+            )
+            return cursor.rowcount
+
+    async def count_by_state(self) -> dict[str, int]:
+        counts = {state.value: 0 for state in ApprovalState}
+        cursor = await self._database.connection.execute(
+            "SELECT state, COUNT(*) AS count FROM pending_approval GROUP BY state"
+        )
+        for row in await cursor.fetchall():
+            counts[row["state"]] = row["count"]
+        return counts
 
 
 class MappingRepository:
