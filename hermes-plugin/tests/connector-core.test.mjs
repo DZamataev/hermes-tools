@@ -514,6 +514,41 @@ test('approval.request is forwarded with only the approved redacted fields', asy
   connector.stop()
 })
 
+test('replayed approval.request is forwarded only through the sanitized approval frame', async () => {
+  const host = fakeHost({
+    async requestProfile(route, method, params, timeout) {
+      host.calls.push([method, route, params, timeout])
+      if (method === 'session.events.since') {
+        return {
+          truncated: false,
+          events: [{
+            profile: 'default', session_id: 'runtime-1', seq: 18, type: 'approval.request',
+            payload: {
+              request_id: 'request-1', stored_session_id: 'stored-1',
+              description: 'Run a command', command: 'git status', allow_permanent: true,
+              smart_denied: false, choices: ['once', 'session', 'always', 'deny'],
+              secret_argument: 'must-not-cross'
+            }
+          }]
+        }
+      }
+      throw new Error(`unexpected RPC: ${method}`)
+    }
+  })
+  const { connector, socket } = await connect({ host })
+  await socket.receive(command('replay', {
+    operation_id: 'op-1', route: WIRE_ROUTE, runtime_session_id: 'runtime-1', after_seq: 17
+  }))
+  assert.equal(frames(socket, 'hermes_event').length, 0)
+  assert.deepEqual(frames(socket, 'approval_request')[0].payload, {
+    route: WIRE_ROUTE, runtime_session_id: 'runtime-1', stored_session_id: 'stored-1',
+    seq: 18, request_id: 'request-1', description: 'Run a command', command: 'git status',
+    allow_permanent: true, smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+  })
+  assert.equal(JSON.stringify(socket.sent).includes('secret_argument'), false)
+  connector.stop()
+})
+
 test('overlapping approval scans share a bounded waiting-session snapshot', async () => {
   const activeSessions = deferred()
   const host = fakeHost({
@@ -606,12 +641,40 @@ test('approval scan failure is not represented as an empty snapshot', async () =
   connector.stop()
 })
 
+test('malformed active-session rows fail an approval scan instead of yielding an empty snapshot', async () => {
+  for (const sessions of [
+    [null],
+    [{ id: 'runtime-waiting', session_key: 'stored-waiting' }]
+  ]) {
+    const host = fakeHost({
+      async requestProfile(route, method, params, timeout) {
+        host.calls.push([method, route, params, timeout])
+        if (method === 'session.active_list') return { sessions }
+        throw new Error(`unexpected RPC: ${method}`)
+      }
+    })
+    const { connector, socket } = await connect({ host })
+    await socket.receive(command('approval_scan', {
+      operation_id: 'approval-operation-1', route: WIRE_ROUTE
+    }))
+    assert.equal(frames(socket, 'approval_snapshot').length, 0)
+    assert.deepEqual(frames(socket, 'command_error')[0].payload, {
+      operation_id: 'approval-operation-1',
+      code: 'approval_scan_failed',
+      message: 'Hermes approval scan failed',
+      acceptance_unknown: false
+    })
+    assert.deepEqual(host.calls.map(([method]) => method), ['session.active_list'])
+    connector.stop()
+  }
+})
+
 test('resolve_approval calls the fixed Hermes responder for every advertised choice', async () => {
   for (const choice of ['once', 'session', 'always', 'deny']) {
     const host = fakeHost({
       async requestProfile(route, method, params, timeout) {
         host.calls.push([method, route, params, timeout])
-        if (method === 'approval.respond') return { status: 'accepted' }
+        if (method === 'approval.respond') return { resolved: 1 }
         throw new Error(`unexpected RPC: ${method}`)
       }
     })
@@ -720,6 +783,50 @@ test('a stale Hermes approval response is reported without transport uncertainty
     message: 'Hermes approval is no longer pending', acceptance_unknown: false
   })
   connector.stop()
+})
+
+test('only a positive Hermes resolved count reports a successful resolution', async () => {
+  for (const response of [
+    undefined,
+    {},
+    { status: 'accepted' },
+    { resolved: 0 },
+    { resolved: '1' }
+  ]) {
+    const host = fakeHost({
+      async requestProfile(route, method, params, timeout) {
+        host.calls.push([method, route, params, timeout])
+        if (method === 'approval.respond') return response
+        throw new Error(`unexpected RPC: ${method}`)
+      }
+    })
+    const { connector, socket } = await connect({ host })
+    host.emit({
+      connectionId: 'local', profile: 'default', session_id: 'runtime-waiting',
+      type: 'approval.request',
+      payload: {
+        request_id: 'request-1', stored_session_id: 'stored-waiting',
+        description: 'Run a command', command: 'git status', allow_permanent: true,
+        smart_denied: false, choices: ['once', 'session', 'always', 'deny']
+      }
+    })
+    await Promise.resolve()
+    await socket.receive(command('resolve_approval', {
+      operation_id: 'approval-operation-1', approval_id: 'bridge-approval-1', route: WIRE_ROUTE,
+      runtime_session_id: 'runtime-waiting', stored_session_id: 'stored-waiting',
+      request_id: 'request-1', choice: 'deny'
+    }))
+    assert.equal(frames(socket, 'approval_resolved').length, 0)
+    assert.deepEqual(frames(socket, 'command_error')[0].payload, {
+      operation_id: 'approval-operation-1',
+      code: response?.resolved === 0 ? 'approval_stale' : 'approval_resolve_failed',
+      message: response?.resolved === 0
+        ? 'Hermes approval is no longer pending'
+        : 'Hermes approval response was invalid',
+      acceptance_unknown: false
+    })
+    connector.stop()
+  }
 })
 
 test('a transport failure after offering an approval reports uncertainty', async () => {

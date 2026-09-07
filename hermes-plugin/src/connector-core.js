@@ -16,10 +16,10 @@ const FORWARDED_EVENTS = new Set([
   'tool.complete',
   'message.complete',
   'session.info',
-  'approval.request',
   'error'
 ])
 
+const APPROVAL_EVENT_TYPES = new Set(['approval.request'])
 const TERMINAL_EVENTS = new Set(['message.complete', 'error'])
 
 function defaultTimers() {
@@ -266,7 +266,7 @@ export function createConnector({
   function handleHostEvent(event) {
     const route = routeForEvent(event)
     if (!route) return
-    if (event?.type === 'approval.request') {
+    if (APPROVAL_EVENT_TYPES.has(event?.type)) {
       emitApprovalRequest(event, route)
       return
     }
@@ -443,12 +443,16 @@ export function createConnector({
         return
       }
       for (const event of events) {
-        emitHermesEvent(event, {
-          correlationId: command.correlation_id,
-          operationId,
-          route,
-          target
-        })
+        if (APPROVAL_EVENT_TYPES.has(event?.type)) {
+          emitApprovalRequest(event, route, target)
+        } else {
+          emitHermesEvent(event, {
+            correlationId: command.correlation_id,
+            operationId,
+            route,
+            target
+          })
+        }
       }
       send(
         target,
@@ -477,20 +481,22 @@ export function createConnector({
       if (!Array.isArray(active?.sessions)) {
         throw new Error('Hermes active session list is invalid')
       }
-      const sessions = active.sessions
-        .filter(session => session?.status === 'waiting')
-        .map(session => {
-          const runtimeSessionId = safeString(session?.id)
-          const storedSessionId = safeString(session?.session_key)
-          if (!runtimeSessionId || !storedSessionId) {
-            throw new Error('Hermes waiting session is invalid')
-          }
-          return {
-            runtime_session_id: runtimeSessionId,
-            stored_session_id: storedSessionId,
-            status: 'waiting'
-          }
-        })
+      const activeSessions = active.sessions.map(session => {
+        const runtimeSessionId = safeString(session?.id)
+        const storedSessionId = safeString(session?.session_key)
+        const status = safeString(session?.status)
+        if (!runtimeSessionId || !storedSessionId || !status) {
+          throw new Error('Hermes active session is invalid')
+        }
+        return {
+          runtime_session_id: runtimeSessionId,
+          stored_session_id: storedSessionId,
+          status
+        }
+      })
+      const sessions = activeSessions
+        .filter(session => session.status === 'waiting')
+        .map(session => ({ ...session, status: 'waiting' }))
       const approvals = []
       for (const session of sessions) {
         const pending = await host.requestProfile(
@@ -591,21 +597,26 @@ export function createConnector({
         { session_id: runtimeSessionId, request_id: requestId, choice },
         REQUEST_TIMEOUT_MS
       )
-      if (response?.status === 'rejected' || response?.accepted === false) {
+      if (Number.isInteger(response?.resolved) && response.resolved > 0) {
+        approvalsByIdentity.delete(key)
+        send(
+          target,
+          frame('approval_resolved', command.correlation_id, {
+            operation_id: operationId,
+            approval_id: approvalId,
+            choice,
+            accepted: true
+          })
+        )
+        return
+      }
+      if (response?.resolved === 0 || response?.status === 'rejected' || response?.accepted === false) {
         approvalsByIdentity.delete(key)
         commandError(target, command, 'approval_stale', 'Hermes approval is no longer pending', false)
         return
       }
       approvalsByIdentity.delete(key)
-      send(
-        target,
-        frame('approval_resolved', command.correlation_id, {
-          operation_id: operationId,
-          approval_id: approvalId,
-          choice,
-          accepted: true
-        })
-      )
+      commandError(target, command, 'approval_resolve_failed', 'Hermes approval response was invalid', false)
     } catch (error) {
       if (isTransportFailure(error)) {
         commandError(target, command, 'approval_resolve_failed', 'Hermes approval response failed', true)
