@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
 from hermes_bridge.config import Settings
 
@@ -17,6 +17,8 @@ from hermes_bridge.config import Settings
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 1024 * 1024
 REPLAY_COMPLETE_CAPABILITY = "replay_complete"
+APPROVALS_CAPABILITY = "approvals_v1"
+ApprovalChoice = Literal["once", "session", "always", "deny"]
 
 
 class ProtocolError(ValueError):
@@ -182,7 +184,98 @@ class CommandErrorFrame(BaseFrame):
     payload: CommandErrorPayload
 
 
-ConnectorCommand = Annotated[Union[SubmitFrame, ReplayFrame], Field(discriminator="kind")]
+class LiveSessionIdentity(StrictModel):
+    runtime_session_id: str = Field(min_length=1)
+    stored_session_id: str = Field(min_length=1)
+    status: Literal["waiting"]
+
+
+class ApprovalRecordPayload(StrictModel):
+    runtime_session_id: str = Field(min_length=1)
+    stored_session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    description: str
+    command: str
+    allow_permanent: bool
+    smart_denied: bool
+    choices: list[ApprovalChoice] = Field(min_length=1)
+
+    @field_validator("choices")
+    @classmethod
+    def choices_must_be_unique(cls, value: list[ApprovalChoice]) -> list[ApprovalChoice]:
+        if len(value) != len(set(value)):
+            raise ValueError("approval choices must be unique")
+        return value
+
+    @model_validator(mode="after")
+    def permanent_choice_must_be_allowed(self) -> ApprovalRecordPayload:
+        if "always" in self.choices and not self.allow_permanent:
+            raise ValueError("always choice requires permanent approval")
+        return self
+
+
+class ApprovalScanPayload(StrictModel):
+    operation_id: str = Field(min_length=1)
+    route: ProfileRoute
+
+
+class ApprovalScanFrame(BaseFrame):
+    kind: Literal["approval_scan"] = "approval_scan"
+    payload: ApprovalScanPayload
+
+
+class ApprovalSnapshotPayload(StrictModel):
+    operation_id: str = Field(min_length=1)
+    route: ProfileRoute
+    sessions: list[LiveSessionIdentity]
+    approvals: list[ApprovalRecordPayload]
+
+
+class ApprovalSnapshotFrame(BaseFrame):
+    kind: Literal["approval_snapshot"] = "approval_snapshot"
+    payload: ApprovalSnapshotPayload
+
+
+class ApprovalRequestPayload(ApprovalRecordPayload):
+    route: ProfileRoute
+    seq: int | None = Field(default=None, ge=0)
+
+
+class ApprovalRequestFrame(BaseFrame):
+    kind: Literal["approval_request"] = "approval_request"
+    payload: ApprovalRequestPayload
+
+
+class ResolveApprovalPayload(StrictModel):
+    operation_id: str = Field(min_length=1)
+    route: ProfileRoute
+    approval_id: str = Field(min_length=1)
+    runtime_session_id: str = Field(min_length=1)
+    stored_session_id: str = Field(min_length=1)
+    request_id: str = Field(min_length=1)
+    choice: ApprovalChoice
+
+
+class ResolveApprovalFrame(BaseFrame):
+    kind: Literal["resolve_approval"] = "resolve_approval"
+    payload: ResolveApprovalPayload
+
+
+class ApprovalResolvedPayload(StrictModel):
+    operation_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    choice: ApprovalChoice
+    accepted: bool
+
+
+class ApprovalResolvedFrame(BaseFrame):
+    kind: Literal["approval_resolved"] = "approval_resolved"
+    payload: ApprovalResolvedPayload
+
+ConnectorCommand = Annotated[
+    Union[SubmitFrame, ReplayFrame, ApprovalScanFrame, ResolveApprovalFrame],
+    Field(discriminator="kind"),
+]
 ConnectorEvent = Annotated[
     Union[
         AcceptedFrame,
@@ -190,6 +283,9 @@ ConnectorEvent = Annotated[
         ReplayCompleteFrame,
         HermesEventFrame,
         CommandErrorFrame,
+        ApprovalSnapshotFrame,
+        ApprovalRequestFrame,
+        ApprovalResolvedFrame,
     ],
     Field(discriminator="kind"),
 ]
@@ -202,6 +298,9 @@ IncomingFrame = Annotated[
         ReplayCompleteFrame,
         HermesEventFrame,
         CommandErrorFrame,
+        ApprovalSnapshotFrame,
+        ApprovalRequestFrame,
+        ApprovalResolvedFrame,
     ],
     Field(discriminator="kind"),
 ]
@@ -239,7 +338,8 @@ def verify_hello(
     expected = sign_challenge(settings.bridge_secret, challenge.nonce, frame.payload.timestamp)
     if not hmac.compare_digest(frame.payload.mac, expected):
         raise AuthenticationError("authentication failed")
-    if REPLAY_COMPLETE_CAPABILITY not in frame.payload.capabilities:
+    required_capabilities = {REPLAY_COMPLETE_CAPABILITY, APPROVALS_CAPABILITY}
+    if not required_capabilities.issubset(frame.payload.capabilities):
         raise ConnectorCompatibilityError("required connector capability unavailable")
 
 

@@ -18,7 +18,7 @@ def hello_for(
     challenge,
     secret,
     *,
-    capabilities=("replay_complete",),
+    capabilities=("replay_complete", "approvals_v1"),
     connector_version="1.1.0",
 ):
     timestamp = int(datetime.now(timezone.utc).timestamp())
@@ -75,6 +75,24 @@ def test_bridge_rejects_new_hello_without_replay_complete_capability(settings):
         assert app.state.connector_hub.connected is False
 
 
+def test_bridge_rejects_hello_without_approvals_capability(settings):
+    app = create_app(settings)
+    with TestClient(app) as client:
+        with client.websocket_connect("/connector") as socket:
+            challenge = socket.receive_json()
+            socket.send_json(
+                hello_for(
+                    challenge,
+                    settings.bridge_secret,
+                    capabilities=("replay_complete",),
+                )
+            )
+            error = socket.receive_json()
+            assert error["kind"] == "error"
+            assert error["payload"]["code"] == "incompatible_connector"
+        assert app.state.connector_hub.connected is False
+
+
 class FakeSocket:
     def __init__(self):
         self.sent = []
@@ -92,7 +110,7 @@ def hello(epoch="epoch-1"):
         "protocol": 1, "kind": "hello", "id": epoch, "correlation_id": "challenge",
         "sent_at": datetime.now(timezone.utc),
         "payload": {"timestamp": 1, "mac": "mac", "connector_version": "1.1.0",
-                    "capabilities": ["replay_complete"],
+                    "capabilities": ["replay_complete", "approvals_v1"],
                     "routes": [{"connection_id": "local", "profile": "default", "target_profile": "default"}]},
     })
 

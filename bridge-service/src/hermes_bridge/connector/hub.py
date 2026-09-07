@@ -8,6 +8,8 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from hermes_bridge.connector.protocol import (
+    ApprovalResolvedFrame,
+    ApprovalSnapshotFrame,
     CommandErrorFrame,
     ConnectorCommand,
     ConnectorEvent,
@@ -33,6 +35,7 @@ class ConnectorHub:
         self._queue_size = queue_size
         self._socket: Any | None = None
         self._routes = ()
+        self._capabilities: frozenset[str] = frozenset()
         self._epoch: str | None = None
         self._version: str | None = None
         self._last_heartbeat = 0.0
@@ -60,6 +63,10 @@ class ConnectorHub:
         return self._routes
 
     @property
+    def capabilities(self) -> frozenset[str]:
+        return self._capabilities
+
+    @property
     def epoch(self) -> str | None:
         return self._epoch
 
@@ -77,6 +84,7 @@ class ConnectorHub:
                 self._pending.clear()
             self._socket = socket
             self._routes = tuple(hello.payload.routes)
+            self._capabilities = frozenset(hello.payload.capabilities)
             self._epoch = hello.id
             self._version = hello.payload.connector_version
             self._last_heartbeat = time.monotonic()
@@ -101,6 +109,7 @@ class ConnectorHub:
                 return
             self._socket = None
             self._routes = ()
+            self._capabilities = frozenset()
             pending = list(self._pending.values())
             self._pending.clear()
         for queue in pending:
@@ -145,7 +154,10 @@ class ConnectorHub:
 
 def _terminal(event: ConnectorEvent) -> bool:
     return (
-        isinstance(event, (CommandErrorFrame, ReplayGapFrame, ReplayCompleteFrame))
+        isinstance(
+            event,
+            (ApprovalResolvedFrame, ApprovalSnapshotFrame, CommandErrorFrame, ReplayGapFrame, ReplayCompleteFrame),
+        )
         or isinstance(event, HermesEventFrame)
         and event.payload.event_type in {"message.complete", "error"}
     )
