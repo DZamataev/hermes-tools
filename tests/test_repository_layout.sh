@@ -9,6 +9,10 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -f "$ROOT/Makefile" ]] || fail "Makefile is missing"
 [[ -f "$ROOT/compose.yaml" ]] || fail "compose.yaml is missing"
 [[ -x "$ROOT/runner/stack.sh" ]] || fail "runner/stack.sh is missing or not executable"
+[[ -x "$ROOT/runner/hermes-webui-launchd.sh" ]] ||
+  fail "runner/hermes-webui-launchd.sh is missing or not executable"
+[[ -f "$ROOT/runner/com.parantoux.hermes-webui.plist.in" ]] ||
+  fail "Hermes WebUI LaunchAgent template is missing"
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"

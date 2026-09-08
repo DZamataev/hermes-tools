@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.parantoux.hermes-webui</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>HERMES_WEBUI_START_SCRIPT</string>
+        <string>--foreground</string>
+        <string>--no-browser</string>
+        <string>--host</string>
+        <string>HERMES_WEBUI_HOST</string>
+        <string>HERMES_WEBUI_PORT</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>HERMES_WEBUI_WORKING_DIRECTORY</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>HERMES_WEBUI_STDOUT_PATH</string>
+
+    <key>StandardErrorPath</key>
+    <string>HERMES_WEBUI_STDERR_PATH</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>HERMES_WEBUI_USER_HOME</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HERMES_WEBUI_PYTHON</key>
+        <string>HERMES_WEBUI_PYTHON_PATH</string>
+        <key>HERMES_WEBUI_HOST</key>
+        <string>HERMES_WEBUI_HOST</string>
+        <key>HERMES_WEBUI_PORT</key>
+        <string>HERMES_WEBUI_PORT</string>
+    </dict>
+</dict>
+</plist>

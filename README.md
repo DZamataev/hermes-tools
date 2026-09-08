@@ -37,3 +37,22 @@ the public project as `upstream`; `make openwebui-fetch` refreshes both remotes
 without changing the checked-out branch.
 
 Stack lifecycle shortcuts are `make start`, `make status`, and `make stop`.
+
+## Native Hermes WebUI LaunchAgent
+
+The sibling `../hermes-webui` checkout can run as a macOS user LaunchAgent.
+The runner installs a generated plist in `~/Library/LaunchAgents`, starts the
+WebUI on port 8787, and keeps it running after crashes. The default bind address
+is `0.0.0.0`, so configure Hermes WebUI authentication before enabling it.
+
+```bash
+make webui-enable   # enable launch-at-login and start now
+make webui-status
+make webui-restart
+make webui-disable  # stop now and disable launch-at-login
+```
+
+Override `HERMES_WEBUI_DIR`, `HERMES_WEBUI_HOST`, `HERMES_WEBUI_PORT`, or
+`HERMES_WEBUI_PYTHON` when the sibling checkout or runtime uses another path.
+Do not run `hermes-webui/start.sh` or `hermes-webui/ctl.sh start` in parallel
+with the enabled LaunchAgent.
