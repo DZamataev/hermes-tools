@@ -16,6 +16,12 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"
+[[ -e "$ROOT/hermes-webui/.git" ]] || fail "hermes-webui submodule is missing"
+
+[[ "$(git config -f "$ROOT/.gitmodules" --get submodule.hermes-webui.path)" == "hermes-webui" ]] ||
+  fail "hermes-webui is not registered as a submodule"
+[[ "$(git config -f "$ROOT/.gitmodules" --get submodule.hermes-webui.url)" == "git@github.com:DZamataev/hermes-webui.git" ]] ||
+  fail "hermes-webui submodule does not point to the requested fork"
 
 grep -Eq '^name:[[:space:]]+hermes$' "$ROOT/compose.yaml" ||
   fail "compose project name must remain hermes to preserve the existing volume"

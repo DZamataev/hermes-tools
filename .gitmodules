@@ -2,3 +2,7 @@
 	path = open-webui
 	url = git@github.com:DZamataev/open-webui.git
 	branch = main
+[submodule "hermes-webui"]
+	path = hermes-webui
+	url = git@github.com:DZamataev/hermes-webui.git
+	branch = master

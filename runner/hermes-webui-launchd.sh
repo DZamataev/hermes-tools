@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 LABEL="com.parantoux.hermes-webui"
 TEMPLATE="$ROOT/runner/$LABEL.plist.in"
-WEBUI_DIR="${HERMES_WEBUI_DIR:-$ROOT/../hermes-webui}"
+WEBUI_DIR="${HERMES_WEBUI_DIR:-$ROOT/hermes-webui}"
 USER_HOME="${HERMES_WEBUI_USER_HOME:-${HOME:?HOME is not set}}"
 PYTHON_BIN="${HERMES_WEBUI_PYTHON:-$USER_HOME/.hermes/hermes-agent/venv/bin/python}"
 HOST="${HERMES_WEBUI_HOST:-0.0.0.0}"

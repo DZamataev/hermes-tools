@@ -10,6 +10,8 @@ Integration workspace for using live Hermes Desktop sessions from OpenWebUI.
   and reconciliation between Hermes and OpenWebUI.
 - `open-webui/` — pinned Git submodule for
   `git@github.com:DZamataev/open-webui.git`.
+- `hermes-webui/` — pinned Git submodule for
+  `git@github.com:DZamataev/hermes-webui.git`.
 - `runner/` — macOS Dock application source and Docker Compose lifecycle tools.
 - `compose.yaml` — complete local stack. The explicit Compose project name
   preserves the existing `hermes_open-webui` data volume.
@@ -40,7 +42,7 @@ Stack lifecycle shortcuts are `make start`, `make status`, and `make stop`.
 
 ## Native Hermes WebUI LaunchAgent
 
-The sibling `../hermes-webui` checkout can run as a macOS user LaunchAgent.
+The `hermes-webui/` checkout can run as a macOS user LaunchAgent.
 The runner installs a generated plist in `~/Library/LaunchAgents`, starts the
 WebUI on port 8787, and keeps it running after crashes. The default bind address
 is `0.0.0.0`, so configure Hermes WebUI authentication before enabling it.
@@ -53,6 +55,6 @@ make webui-disable  # stop now and disable launch-at-login
 ```
 
 Override `HERMES_WEBUI_DIR`, `HERMES_WEBUI_HOST`, `HERMES_WEBUI_PORT`, or
-`HERMES_WEBUI_PYTHON` when the sibling checkout or runtime uses another path.
+`HERMES_WEBUI_PYTHON` when the checkout or runtime uses another path.
 Do not run `hermes-webui/start.sh` or `hermes-webui/ctl.sh start` in parallel
 with the enabled LaunchAgent.
