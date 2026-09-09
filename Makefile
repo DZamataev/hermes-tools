@@ -8,6 +8,7 @@ test:
 	/bin/sh tests/test-restore-teamclaude.sh
 	node --test desktop-plugins/comp-count/plugin.test.mjs
 	/bin/zsh runner/tests/test_launchd.sh
+	/bin/zsh runner/tests/test_webui_app.sh
 
 app:
 	/bin/zsh runner/build-app.sh
