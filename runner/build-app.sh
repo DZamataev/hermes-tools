@@ -6,6 +6,7 @@ SOURCE="$ROOT/runner/HermesWebUIRunner.applescript"
 ICON="/Users/frenzy/.hermes/hermes-agent/apps/desktop/assets/icon.icns"
 APP="$ROOT/Hermes WebUI.app"
 EXPECTED_APP="/Users/frenzy/dev/hermes/hermes-tools/Hermes WebUI.app"
+EXPECTED_APP="${HERMES_WEBUI_EXPECTED_APP:-$EXPECTED_APP}"
 
 die() { print -u2 -- "$1"; exit 1; }
 

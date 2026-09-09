@@ -9,6 +9,7 @@ test:
 	node --test desktop-plugins/comp-count/plugin.test.mjs
 	/bin/zsh runner/tests/test_launchd.sh
 	/bin/zsh runner/tests/test_webui_app.sh
+	/bin/zsh runner/tests/test_app_bundle.sh
 
 app:
 	/bin/zsh runner/build-app.sh

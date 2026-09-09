@@ -1,9 +1,9 @@
-property stackScript : "/Users/frenzy/dev/hermes/hermes-tools/runner/stack.sh"
-property webUIURL : "http://localhost:11001"
+property lifecycleScript : "/Users/frenzy/dev/hermes/hermes-tools/runner/hermes-webui-app.sh"
+property webUIURL : "http://127.0.0.1:8787"
 
 on run
   try
-    do shell script quoted form of stackScript & " start"
+    do shell script quoted form of lifecycleScript & " start"
     open location webUIURL
   on error errorMessage number errorNumber
     display dialog "Hermes WebUI could not start:" & return & errorMessage buttons {"OK"} default button "OK" with icon stop
@@ -21,9 +21,9 @@ end idle
 
 on quit
   try
-    do shell script quoted form of stackScript & " stop"
+    do shell script quoted form of lifecycleScript & " stop"
   on error errorMessage number errorNumber
-    display dialog "Hermes WebUI stack could not be stopped:" & return & errorMessage buttons {"OK"} default button "OK" with icon caution
+    display dialog "Hermes WebUI could not stop:" & return & errorMessage buttons {"OK"} default button "OK" with icon caution
   end try
   continue quit
 end quit
