@@ -14,6 +14,8 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -f "$ROOT/runner/com.parantoux.hermes-webui.plist.in" ]] ||
   fail "Hermes WebUI LaunchAgent template is missing"
 [[ -d "$ROOT/hermes-plugin" ]] || fail "hermes-plugin directory is missing"
+[[ -f "$ROOT/desktop-plugins/comp-count/plugin.js" ]] ||
+  fail "comp-count desktop plugin is missing"
 [[ -d "$ROOT/bridge-service" ]] || fail "bridge-service directory is missing"
 [[ -e "$ROOT/open-webui/.git" ]] || fail "open-webui submodule is missing"
 [[ -e "$ROOT/hermes-webui/.git" ]] || fail "hermes-webui submodule is missing"

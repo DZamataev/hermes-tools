@@ -4,6 +4,7 @@ set -eu
 
 root_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 script="$root_dir/restore-teamclaude.sh"
+plugin_source="$root_dir/desktop-plugins/comp-count/plugin.js"
 relay_url='https://teamclaude.larid.dedyn.io:3443'
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
@@ -116,6 +117,7 @@ write_state() {
 run_script() {
   HERMES_BIN="$fake_hermes" \
   HERMES_GIT_BIN="$fake_git" \
+  HERMES_HOME="$test_dir/home" \
   HERMES_SOURCE_DIR="$test_dir/source" \
   FAKE_HERMES_STATE="$test_dir/state" \
   FAKE_HERMES_LOG="$test_dir/log" \
@@ -137,6 +139,10 @@ write_state \
   '__missing__'
 : >"$test_dir/log"
 run_script >/dev/null
+if ! cmp -s "$plugin_source" "$test_dir/home/desktop-plugins/comp-count/plugin.js"; then
+  printf 'FAIL: installs comp-count from the repository copy\n' >&2
+  exit 1
+fi
 assert_equal "custom:teamclaude
 __missing__
 __missing__
@@ -189,7 +195,12 @@ write_state \
   anthropic_messages \
   true
 : >"$test_dir/log"
+printf 'stale plugin\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
 run_script >/dev/null
+if ! cmp -s "$plugin_source" "$test_dir/home/desktop-plugins/comp-count/plugin.js"; then
+  printf 'FAIL: restores an outdated comp-count installation\n' >&2
+  exit 1
+fi
 assert_equal "config get model.provider
 config get model.base_url
 config get providers.teamclaude.name
@@ -200,6 +211,10 @@ config get providers.teamclaude.key_env
 config get providers.teamclaude.transport
 config get providers.teamclaude.capabilities.anthropic_oauth_proxy
 config get model.key_env" "$(cat "$test_dir/log")" 'does nothing when settings are already correct'
+if grep -qx 'gateway restart' "$test_dir/log"; then
+  printf 'FAIL: restarts the gateway when only comp-count changed\n' >&2
+  exit 1
+fi
 
 write_state \
   custom:teamclaude \

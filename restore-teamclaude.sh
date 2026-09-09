@@ -5,6 +5,10 @@ set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 patch_file="$script_dir/teamclaude-oauth-proxy.patch"
 source_dir=${HERMES_SOURCE_DIR:-"${HOME}/.hermes/hermes-agent"}
+hermes_home=${HERMES_HOME:-"${HOME}/.hermes"}
+comp_count_source="$script_dir/desktop-plugins/comp-count/plugin.js"
+comp_count_dir="$hermes_home/desktop-plugins/comp-count"
+comp_count_target="$comp_count_dir/plugin.js"
 
 relay_url='https://teamclaude.larid.dedyn.io:3443'
 expected_provider='custom:teamclaude'
@@ -26,9 +30,20 @@ if test ! -f "$patch_file"; then
   printf 'restore-teamclaude: Hermes OAuth proxy patch is missing: %s\n' "$patch_file" >&2
   exit 1
 fi
+if test ! -f "$comp_count_source"; then
+  printf 'restore-teamclaude: comp-count source is missing: %s\n' "$comp_count_source" >&2
+  exit 1
+fi
 if test ! -d "$source_dir/.git"; then
   printf 'restore-teamclaude: Hermes git checkout not found: %s\n' "$source_dir" >&2
   exit 1
+fi
+
+comp_count_changed=false
+if ! cmp -s "$comp_count_source" "$comp_count_target"; then
+  install -d -m 0755 "$comp_count_dir"
+  install -m 0644 "$comp_count_source" "$comp_count_target"
+  comp_count_changed=true
 fi
 
 code_changed=false
@@ -134,7 +149,11 @@ if test "$model_key_env_present" = true; then
 fi
 
 if test "$changed" = false; then
-  printf 'TeamClaude source patch and settings are already correct; gateway restart skipped.\n'
+  if test "$comp_count_changed" = true; then
+    printf 'TeamClaude source patch and settings are already correct; comp-count restored; gateway restart skipped.\n'
+  else
+    printf 'TeamClaude source patch, settings, and comp-count installation are already correct; gateway restart skipped.\n'
+  fi
   exit 0
 fi
 
@@ -172,4 +191,8 @@ if test "$saved_provider" != "$expected_provider" \
   exit 1
 fi
 
-printf 'TeamClaude settings restored and Hermes gateway restarted.\n'
+if test "$comp_count_changed" = true; then
+  printf 'TeamClaude settings and comp-count restored; Hermes gateway restarted.\n'
+else
+  printf 'TeamClaude settings restored and Hermes gateway restarted.\n'
+fi

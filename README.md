@@ -6,6 +6,8 @@ Integration workspace for using live Hermes Desktop sessions from OpenWebUI.
 
 - `hermes-plugin/` — update-safe Hermes user plugin. It will submit turns to
   the existing in-memory Desktop session without replacing its event transport.
+- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin;
+  `restore-teamclaude.sh` keeps its installed copy under `~/.hermes` current.
 - `bridge-service/` — OpenAI-compatible adapter, session mapping, event replay,
   and reconciliation between Hermes and OpenWebUI.
 - `open-webui/` — pinned Git submodule for

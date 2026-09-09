@@ -9,6 +9,7 @@ bootstrap:
 test:
 	/bin/zsh tests/test_repository_layout.sh
 	/bin/sh tests/test-restore-teamclaude.sh
+	node --test desktop-plugins/comp-count/plugin.test.mjs
 	/bin/zsh runner/tests/test_stack.sh
 	/bin/zsh runner/tests/test_launchd.sh
 
