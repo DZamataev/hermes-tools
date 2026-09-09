@@ -61,7 +61,7 @@ exec /bin/sleep 0.05
 FAKE_SLEEP
 cat > "$TEST_TMP/fake checkout/scripts/lib/health_probe.sh" <<'FAKE_PROBE'
 hermes_webui_probe_health() {
-  printf '%s\n' "$*" >> "$FAKE_SHARED_PROBE_CALLS"
+  printf '%s|TLS_CERT=%s|TLS_KEY=%s\n' "$*" "${TLS_CERT:-}" "${TLS_KEY:-}" >> "$FAKE_SHARED_PROBE_CALLS"
   [[ -f "$FAKE_HEALTHY" ]]
 }
 FAKE_PROBE
@@ -211,9 +211,15 @@ pass "unowned PID preserved and never signaled (including incidental path mentio
 # Exercise the normal shared-probe branch without network or real user state.
 reset_case
 : > "$FAKE_HEALTHY"
+cat > "$HERMES_WEBUI_DIR/.env" <<'FAKE_ENV'
+TLS_CERT=/tmp/test-cert.pem
+TLS_KEY=/tmp/test-key.pem
+FAKE_ENV
 output=$(HERMES_WEBUI_APP_CURL_BIN='' run_controller status)
 assert_contains "$output" "external server responding"
 assert_contains "$(<"$FAKE_SHARED_PROBE_CALLS")" "127.0.0.1 8787 /health 2 direct"
+assert_contains "$(<"$FAKE_SHARED_PROBE_CALLS")" "TLS_CERT=/tmp/test-cert.pem|TLS_KEY=/tmp/test-key.pem"
+rm -f "$HERMES_WEBUI_DIR/.env"
 pass "normal health check uses shared helper"
 
 reset_case

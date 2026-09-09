@@ -71,11 +71,21 @@ health_probe() {
       "http://127.0.0.1:$PORT/health" >/dev/null 2>&1
   else
     # The upstream helper is Bash: its local `path` would mutate PATH in zsh.
-    # Source it in Bash, preserving its TLS/fallback semantics and direct probe.
+    # Source it in Bash, loading the same checkout .env as start.sh first so
+    # TLS/fallback probing observes the server's effective configuration.
     PATH=/usr/bin:/bin /bin/bash -c '
+      env_file="$3/.env"
+      if [[ -f "$env_file" ]]; then
+        filtered_env="$(mktemp "${TMPDIR:-/tmp}/hermes-webui-app-env.XXXXXX")" || exit 1
+        trap '\''rm -f "$filtered_env"'\'' EXIT
+        grep -vE '\''^[[:space:]]*(export[[:space:]]+)?(UID|GID|EUID|EGID|PPID)='\'' "$env_file" > "$filtered_env" || true
+        set -a
+        source "$filtered_env"
+        set +a
+      fi
       source "$1"
       hermes_webui_probe_health 127.0.0.1 "$2" /health 2 direct
-    ' hermes-webui-app "$WEBUI_DIR/scripts/lib/health_probe.sh" "$PORT" >/dev/null
+    ' hermes-webui-app "$WEBUI_DIR/scripts/lib/health_probe.sh" "$PORT" "$WEBUI_DIR" >/dev/null
   fi
 }
 
