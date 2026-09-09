@@ -1,53 +1,55 @@
 # Hermes Tools
 
-Integration workspace for using live Hermes Desktop sessions from OpenWebUI.
+Local macOS tooling for running Hermes WebUI and keeping Hermes Desktop
+plugins installed.
 
 ## Layout
 
-- `hermes-plugin/` — update-safe Hermes user plugin. It will submit turns to
-  the existing in-memory Desktop session without replacing its event transport.
-- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin;
-  `restore-teamclaude.sh` keeps its installed copy under `~/.hermes` current.
-- `bridge-service/` — OpenAI-compatible adapter, session mapping, event replay,
-  and reconciliation between Hermes and OpenWebUI.
-- `open-webui/` — pinned Git submodule for
-  `git@github.com:DZamataev/open-webui.git`.
 - `hermes-webui/` — pinned Git submodule for
   `git@github.com:DZamataev/hermes-webui.git`.
-- `runner/` — macOS Dock application source and Docker Compose lifecycle tools.
-- `compose.yaml` — complete local stack. The explicit Compose project name
-  preserves the existing `hermes_open-webui` data volume.
-- `docs/` — architecture specifications and implementation plans.
-- `tests/` — repository-level integration and layout checks.
+- `runner/` — native Dock application and LaunchAgent lifecycle tools.
+- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin;
+  `restore-teamclaude.sh` keeps its installed copy under `~/.hermes` current.
+- `docs/` — design specifications and implementation plans.
+- `tests/` — repository-level integration and lifecycle checks.
 
-## Bootstrap
+## Bootstrap and test
 
 ```bash
 make bootstrap
 make test
 ```
 
-The runner reads `API_SERVER_KEY` from `/Users/frenzy/.hermes/.env`. Secrets
-must not be stored in this repository.
+## Dock application
 
-Build the Dock application with:
+Build the stay-open macOS application:
 
 ```bash
 make app
 ```
 
-The OpenWebUI checkout uses your fork as `origin`. `make bootstrap` also adds
-the public project as `upstream`; `make openwebui-fetch` refreshes both remotes
-without changing the checked-out branch.
+This creates `Hermes WebUI.app` in the repository root. Opening it starts the
+native WebUI at `http://127.0.0.1:8787` and opens that address in the default
+browser. Normally quitting the application stops only the WebUI process that
+the application started.
 
-Stack lifecycle shortcuts are `make start`, `make status`, and `make stop`.
+The same lifecycle can be inspected or recovered from a terminal:
 
-## Native Hermes WebUI LaunchAgent
+```bash
+runner/hermes-webui-app.sh start
+runner/hermes-webui-app.sh status
+runner/hermes-webui-app.sh stop
+```
 
-The `hermes-webui/` checkout can run as a macOS user LaunchAgent.
-The runner installs a generated plist in `~/Library/LaunchAgents`, starts the
-WebUI on port 8787, and keeps it running after crashes. The default bind address
-is `0.0.0.0`, so configure Hermes WebUI authentication before enabling it.
+Force Quit, `kill -9`, a system crash, or power loss can prevent the
+application's quit handler from running. In that case, reopening the
+application reconnects to its saved process; the `status` and `stop` commands
+above are also available for recovery.
+
+## LaunchAgent
+
+For an always-on service that starts at login and restarts after failures, use
+the existing macOS user LaunchAgent:
 
 ```bash
 make webui-enable   # enable launch-at-login and start now
@@ -56,7 +58,13 @@ make webui-restart
 make webui-disable  # stop now and disable launch-at-login
 ```
 
-Override `HERMES_WEBUI_DIR`, `HERMES_WEBUI_HOST`, `HERMES_WEBUI_PORT`, or
+The LaunchAgent defaults to port 8787 and bind address `0.0.0.0`, so configure
+Hermes WebUI authentication before enabling it. Override
+`HERMES_WEBUI_DIR`, `HERMES_WEBUI_HOST`, `HERMES_WEBUI_PORT`, or
 `HERMES_WEBUI_PYTHON` when the checkout or runtime uses another path.
-Do not run `hermes-webui/start.sh` or `hermes-webui/ctl.sh start` in parallel
-with the enabled LaunchAgent.
+
+The Dock application and LaunchAgent are separate, mutually exclusive launch
+modes when configured for the same host and port. The application never changes
+LaunchAgent configuration. Disable the LaunchAgent before using the application
+on port 8787, and do not run `hermes-webui/start.sh` or
+`hermes-webui/ctl.sh start` alongside either managed mode on the same endpoint.
