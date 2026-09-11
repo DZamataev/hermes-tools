@@ -28,10 +28,11 @@ Build the stay-open macOS application:
 make app
 ```
 
-This creates `Hermes WebUI.app` in the repository root. Opening it starts the
-native WebUI at `http://127.0.0.1:8787` and opens that address in the default
+This creates `Hermes WebUI.app` in the repository root. Opening it binds the
+native WebUI to `0.0.0.0:8787` and opens `http://127.0.0.1:8787` in the default
 browser. Normally quitting the application stops only the WebUI process that
-the application started.
+the application started. Configure Hermes WebUI authentication before exposing
+port 8787 to a LAN or the internet.
 
 The same lifecycle can be inspected or recovered from a terminal:
 

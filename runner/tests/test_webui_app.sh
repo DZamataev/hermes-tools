@@ -81,7 +81,8 @@ chmod +x "$TEST_TMP/fake checkout/start.sh" "$TEST_TMP/bin/"*
 export HERMES_WEBUI_DIR="$TEST_TMP/fake checkout"
 export HERMES_WEBUI_USER_HOME="$TEST_TMP/home"
 export HERMES_WEBUI_PYTHON=/usr/bin/true
-export HERMES_WEBUI_HOST=127.0.0.1 HERMES_WEBUI_PORT=8787
+unset HERMES_WEBUI_HOST
+export HERMES_WEBUI_PORT=8787
 export HERMES_WEBUI_APP_PID_FILE="$TEST_TMP/state/app.pid"
 export HERMES_WEBUI_APP_LOG_FILE="$TEST_TMP/logs/app.log"
 export HERMES_WEBUI_APP_START_TIMEOUT=10 HERMES_WEBUI_APP_STOP_TIMEOUT=10
@@ -119,7 +120,7 @@ reset_case
 output=$(run_controller start)
 assert_contains "$output" "Started Hermes WebUI"
 [[ -s "$HERMES_WEBUI_APP_PID_FILE" ]] || fail "start must persist a PID"
-assert_contains "$(<"$FAKE_START_CALLS")" "--foreground --no-browser --host 127.0.0.1 8787"
+assert_contains "$(<"$FAKE_START_CALLS")" "--foreground --no-browser --host 0.0.0.0 8787"
 [[ "$(<"$FAKE_PYTHON_CALL")" == /usr/bin/true ]] || fail "Python override not forwarded"
 assert_contains "$(<"$FAKE_CURL_CALLS")" "--fail --silent --show-error --max-time 2 http://127.0.0.1:8787/health"
 first_pid="$(<"$HERMES_WEBUI_APP_PID_FILE")"
