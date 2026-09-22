@@ -19,6 +19,7 @@ plugins installed.
 ## Bootstrap and test
 
 ```bash
+bun run help               # every script, with examples
 bun run bootstrap          # git submodule update --init --recursive
 bun run check              # every suite, concurrently
 bun run check comp-count   # just the suites whose name matches

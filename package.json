@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "help": "bun run scripts/help.mjs",
     "check": "bun run scripts/check.mjs",
     "app": "zsh runner/build-app.sh",
     "bootstrap": "git submodule update --init --recursive",

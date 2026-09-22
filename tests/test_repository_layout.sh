@@ -8,6 +8,7 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -f "$ROOT/README.md" ]] || fail "README.md is missing"
 [[ -f "$ROOT/package.json" ]] || fail "package.json is missing"
 [[ -f "$ROOT/scripts/check.mjs" ]] || fail "scripts/check.mjs is missing"
+[[ -f "$ROOT/scripts/help.mjs" ]] || fail "scripts/help.mjs is missing"
 [[ ! -e "$ROOT/Makefile" ]] || fail "the Makefile was replaced by bun scripts"
 [[ -x "$ROOT/setup_hermes_tools.sh" ]] || fail "setup_hermes_tools.sh is missing or not executable"
 [[ ! -e "$ROOT/restore-teamclaude.sh" ]] ||
@@ -67,3 +68,24 @@ grep -Fq '127.0.0.1:8787' "$ROOT/README.md" || fail "README must document the na
 grep -Fq 'runner/hermes-webui-app.sh' "$ROOT/README.md" || fail "README must document app lifecycle commands"
 ! rg -n 'OpenWebUI|open-webui|localhost:11001|Docker Compose lifecycle' "$ROOT/README.md" >/dev/null ||
   fail "README still describes the removed OpenWebUI stack"
+
+# `bun run help` reads package.json and marks anything it cannot explain, so a
+# script added without documentation shows up here rather than in front of a
+# user. Help that drifts from the thing it documents gets believed.
+help_output="$(cd "$ROOT" && bun run --silent help 2>&1)" || {
+  print -u2 -- "FAIL: bun run help failed"
+  print -ru2 -- "$help_output"
+  exit 1
+}
+if print -r -- "$help_output" | grep -Fq 'undocumented'; then
+  print -u2 -- "FAIL: a script in package.json has no entry in scripts/help.mjs"
+  print -r -- "$help_output" | grep -B1 undocumented >&2
+  exit 1
+fi
+
+# Every script must actually appear in the output — an entry documented under a
+# name nobody can run is the same defect pointed the other way.
+for script in $(cd "$ROOT" && bun --print 'Object.keys(require("./package.json").scripts).join("\n")'); do
+  print -r -- "$help_output" | grep -Fq "bun run $script" ||
+    fail "bun run help never mentions the '$script' script"
+done
