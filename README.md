@@ -8,10 +8,11 @@ plugins installed.
 - `hermes-webui/` — pinned Git submodule for
   `git@github.com:DZamataev/hermes-webui.git`.
 - `runner/` — native Dock application and LaunchAgent lifecycle tools.
-- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin;
-  `restore-teamclaude.sh` keeps its installed copy under `~/.hermes` current.
+- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
+- `setup_hermes_tools.sh` — installs both plugins under `~/.hermes`, keeps the
+  TeamClaude provider settings and OAuth proxy patch in place.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
@@ -22,21 +23,32 @@ make bootstrap
 make test
 ```
 
+## Setup
+
+```bash
+./setup_hermes_tools.sh
+```
+
+Idempotent, and restarts the Hermes gateway only when something actually
+changed. It installs `comp-count` and `provider-limits` under `~/.hermes`,
+enables the `provider-limits` backend gate, verifies the TeamClaude provider
+settings, and applies the OAuth proxy patch to the Hermes checkout. When that
+patch no longer applies after a Hermes update it stops with rebase instructions
+rather than writing conflict markers into runnable source.
+
+The script cannot enable the `provider-limits` **desktop** half: the loader
+forces a materialized package off whatever the plugin declares, so flip it on
+once in Capabilities → Plugins.
+
 ## Provider limits plugin
 
 `plugins/provider-limits/` is the source of truth for the status-bar quota chip.
-Unlike `comp-count` it has two halves and installs into `~/.hermes/plugins/`, so
-`restore-teamclaude.sh` does not manage it:
-
-```bash
-cp -R plugins/provider-limits ~/.hermes/plugins/
-hermes plugins enable provider-limits   # then restart the gateway
-# Capabilities → Plugins → enable the desktop half
-```
+Unlike `comp-count` it has two halves — a FastAPI backend and the desktop UI —
+and installs into `~/.hermes/plugins/`.
 
 Both halves default to OFF — that is the plugin security boundary
 (GHSA-mcfc-hp25-cjv7), not an oversight. Backend routes mount at gateway startup
-only, so enabling without a restart leaves the chip showing `—`.
+only, which is why the setup script restarts the gateway after updating them.
 
 Its own bench runs offline and needs no API keys; the live-upstream pass is
 opt-in because an upstream outage is not this code breaking:

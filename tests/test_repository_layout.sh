@@ -7,7 +7,11 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 
 [[ -f "$ROOT/README.md" ]] || fail "README.md is missing"
 [[ -f "$ROOT/Makefile" ]] || fail "Makefile is missing"
-[[ -x "$ROOT/restore-teamclaude.sh" ]] || fail "TeamClaude restore script is missing or not executable"
+[[ -x "$ROOT/setup_hermes_tools.sh" ]] || fail "setup_hermes_tools.sh is missing or not executable"
+[[ ! -e "$ROOT/restore-teamclaude.sh" ]] ||
+  fail "restore-teamclaude.sh was renamed to setup_hermes_tools.sh"
+[[ ! -e "$ROOT/tests/test-restore-teamclaude.sh" ]] ||
+  fail "test-restore-teamclaude.sh was renamed to test-setup-hermes-tools.sh"
 [[ -x "$ROOT/runner/hermes-webui-launchd.sh" ]] ||
   fail "runner/hermes-webui-launchd.sh is missing or not executable"
 [[ -f "$ROOT/runner/com.parantoux.hermes-webui.plist.in" ]] ||

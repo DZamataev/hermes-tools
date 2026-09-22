@@ -3,7 +3,7 @@
 set -eu
 
 root_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-script="$root_dir/restore-teamclaude.sh"
+script="$root_dir/setup_hermes_tools.sh"
 plugin_source="$root_dir/desktop-plugins/comp-count/plugin.js"
 relay_url='https://teamclaude.larid.dedyn.io:3443'
 test_dir=$(mktemp -d)
@@ -51,6 +51,12 @@ write_key() {
 
 case "$1 $2" in
   'config get')
+    # The real CLI prints a list as "- item" lines; the script greps that shape.
+    if test "$3" = plugins.enabled; then
+      test -s "$FAKE_PLUGINS_STATE" || exit 1
+      cat "$FAKE_PLUGINS_STATE"
+      exit 0
+    fi
     read_key "$3"
     ;;
   'config set')
@@ -60,6 +66,12 @@ case "$1 $2" in
   'config unset')
     test "${FAKE_HERMES_FAIL_UNSET:-0}" != 1 || exit 9
     write_key "$3" '__missing__'
+    ;;
+  'plugins enable')
+    test "${FAKE_HERMES_FAIL_ENABLE:-0}" != 1 || exit 9
+    # The plugin name is the last argument, after any flags.
+    for name in "$@"; do :; done
+    printf -- '- %s\n' "$name" >>"$FAKE_PLUGINS_STATE"
     ;;
   'gateway restart')
     ;;
@@ -98,6 +110,7 @@ EOF
 chmod +x "$fake_git"
 mkdir -p "$test_dir/source/.git"
 printf 'applied\n' >"$test_dir/patch-state"
+: >"$test_dir/plugins-state"
 : >"$test_dir/git-log"
 
 assert_equal() {
@@ -123,6 +136,7 @@ run_script() {
   FAKE_HERMES_LOG="$test_dir/log" \
   FAKE_GIT_LOG="$test_dir/git-log" \
   FAKE_PATCH_STATE="$test_dir/patch-state" \
+  FAKE_PLUGINS_STATE="$test_dir/plugins-state" \
     "$script"
 }
 
@@ -141,6 +155,19 @@ write_state \
 run_script >/dev/null
 if ! cmp -s "$plugin_source" "$test_dir/home/desktop-plugins/comp-count/plugin.js"; then
   printf 'FAIL: installs comp-count from the repository copy\n' >&2
+  exit 1
+fi
+# provider-limits is a two-half plugin: the desktop file alone is not enough,
+# and its backend is dead weight unless the gate is set.
+for half in desktop/plugin.js dashboard/plugin_api.py plugin.yaml tests/run.sh; do
+  if ! cmp -s "$root_dir/plugins/provider-limits/$half" \
+    "$test_dir/home/plugins/provider-limits/$half"; then
+    printf 'FAIL: installs provider-limits/%s from the repository copy\n' "$half" >&2
+    exit 1
+  fi
+done
+if ! grep -qx -- '- provider-limits' "$test_dir/plugins-state"; then
+  printf 'FAIL: enables the provider-limits backend gate\n' >&2
   exit 1
 fi
 assert_equal "custom:teamclaude
@@ -163,6 +190,8 @@ config get providers.teamclaude.key_env
 config get providers.teamclaude.transport
 config get providers.teamclaude.capabilities.anthropic_oauth_proxy
 config get model.key_env
+config get plugins.enabled
+plugins enable --no-allow-tool-override provider-limits
 config set model.provider custom:teamclaude
 config set providers.teamclaude.name TeamClaude
 config set providers.teamclaude.api $relay_url
@@ -210,9 +239,36 @@ config get providers.teamclaude.base_url
 config get providers.teamclaude.key_env
 config get providers.teamclaude.transport
 config get providers.teamclaude.capabilities.anthropic_oauth_proxy
-config get model.key_env" "$(cat "$test_dir/log")" 'does nothing when settings are already correct'
+config get model.key_env
+config get plugins.enabled" "$(cat "$test_dir/log")" 'does nothing when settings are already correct'
 if grep -qx 'gateway restart' "$test_dir/log"; then
   printf 'FAIL: restarts the gateway when only comp-count changed\n' >&2
+  exit 1
+fi
+if grep -q '^plugins enable' "$test_dir/log"; then
+  printf 'FAIL: re-enables an already enabled plugin\n' >&2
+  exit 1
+fi
+
+# A file deleted upstream must disappear from the installed copy: a stale
+# plugin_api.py is still imported by the gateway, and a stale desktop half is
+# still loaded by the renderer.
+printf 'stale\n' >"$test_dir/home/plugins/provider-limits/leftover.py"
+printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
+: >"$test_dir/log"
+run_script >/dev/null
+if test -e "$test_dir/home/plugins/provider-limits/leftover.py"; then
+  printf 'FAIL: leaves a file that no longer exists in the repository copy\n' >&2
+  exit 1
+fi
+if ! cmp -s "$root_dir/plugins/provider-limits/desktop/plugin.js" \
+  "$test_dir/home/plugins/provider-limits/desktop/plugin.js"; then
+  printf 'FAIL: restores an outdated provider-limits installation\n' >&2
+  exit 1
+fi
+# Updated backend source only takes effect at gateway startup.
+if ! grep -qx 'gateway restart' "$test_dir/log"; then
+  printf 'FAIL: does not restart after updating the provider-limits backend\n' >&2
   exit 1
 fi
 
@@ -294,14 +350,15 @@ if ! grep -qx 'gateway restart' "$test_dir/log"; then
   exit 1
 fi
 
-printf 'PASS: restore-teamclaude.sh\n'
+printf 'PASS: setup_hermes_tools.sh\n'
 
 # A three-way --check can succeed even when applying writes conflict markers.
 # Exercise real git and assert an incompatible patch leaves the checkout intact.
 fixture="$test_dir/conflict"
 mkdir -p "$fixture/tools/desktop-plugins/comp-count" "$fixture/source"
-cp "$script" "$fixture/tools/restore-teamclaude.sh"
+cp "$script" "$fixture/tools/setup_hermes_tools.sh"
 cp "$plugin_source" "$fixture/tools/desktop-plugins/comp-count/plugin.js"
+cp -R "$root_dir/plugins" "$fixture/tools/plugins"
 git -C "$fixture/source" init -q
 git -C "$fixture/source" config user.name Test
 git -C "$fixture/source" config user.email test@example.invalid
@@ -317,7 +374,8 @@ git -C "$fixture/source" commit -qm upstream
 if HERMES_SOURCE_DIR="$fixture/source" HERMES_HOME="$fixture/home" \
   HERMES_GIT_BIN="$(command -v git)" HERMES_BIN="$fake_hermes" \
   FAKE_HERMES_LOG="$test_dir/log" FAKE_HERMES_STATE="$test_dir/state" \
-  "$fixture/tools/restore-teamclaude.sh" >"$fixture/output" 2>&1; then
+  FAKE_PLUGINS_STATE="$test_dir/plugins-state" \
+  "$fixture/tools/setup_hermes_tools.sh" >"$fixture/output" 2>&1; then
   printf 'FAIL: accepts a conflicting patch\n' >&2
   exit 1
 fi
