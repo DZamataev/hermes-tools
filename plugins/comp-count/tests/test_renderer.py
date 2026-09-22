@@ -57,7 +57,7 @@ shutil.copy(PLUGIN, root / "plugin.js")
 (root / "probe.mjs").write_text(r"""
 globalThis.document ??= { createElement: () => ({ remove() {} }), head: { append() {} } }
 
-import {
+import plugin, {
   BLOCKS, formatDuration, formatSpan, list, LOCALES, markerRow, routeLabel, sparkline, toolsLabel
 } from './plugin.js'
 
@@ -175,6 +175,35 @@ check('markers-guard-garbage', markerRow({}).length === 20)
 check('route-guards-garbage', routeLabel({}, en) === 'unknown route')
 check('tools-guards-garbage', toolsLabel({}) === '')
 check('duration-guards-garbage', typeof formatDuration(NaN, en) === 'string')
+
+// --- chip -------------------------------------------------------------------
+
+const renderChip = () => {
+  let contribution
+  plugin.register({
+    register(value) { contribution = value },
+    rest: async () => ({ segments: [] }),
+    // register() registers locale bundles and expects a disposer back.
+    i18n: { register: () => () => {}, t: key => key },
+    onDispose() {}
+  })
+  return contribution
+}
+
+check('plugin-id', plugin.id === 'comp-count', plugin.id)
+const contribution = renderChip()
+check('chip-area', contribution.area === 'statusBar.right', contribution.area)
+check('chip-renders', typeof contribution.render === 'function')
+
+// The chip must never regress: whatever the backend does, it keeps printing the
+// live compaction count with the clamp it always had.
+const { compactionLabel } = plugin
+check('chip-count', compactionLabel({ compressions: 3 }) === '🧳 3', compactionLabel({ compressions: 3 }))
+check('chip-clamps-float', compactionLabel({ compressions: 2.9 }) === '🧳 2')
+check('chip-clamps-negative', compactionLabel({ compressions: -4 }) === '🧳 0')
+check('chip-clamps-garbage', compactionLabel({ compressions: 'nonsense' }) === '🧳 0')
+check('chip-clamps-null', compactionLabel(null) === '🧳 0')
+check('chip-clamps-missing', compactionLabel({}) === '🧳 0')
 
 console.log(`  ${checks - failures.length}/${checks} checks passed`)
 for (const failure of failures) console.log(`  ✗ ${failure}`)
