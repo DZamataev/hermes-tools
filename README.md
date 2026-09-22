@@ -81,7 +81,12 @@ Build the stay-open macOS application:
 bun run app
 ```
 
-This creates `Hermes WebUI.app` in the repository root. Opening it binds the
+This creates `Hermes WebUI.app` in the repository root. The applet records the
+path of the checkout that built it, so rebuild after moving the repository;
+the bundle itself can then be moved to `/Applications` freely. Set
+`HERMES_WEBUI_ICON` if Hermes is not at `~/.hermes`.
+
+Opening it binds the
 native WebUI to `0.0.0.0:8787` and opens `http://127.0.0.1:8787` in the default
 browser. Normally quitting the application stops only the WebUI process that
 the application started. Configure Hermes WebUI authentication before exposing

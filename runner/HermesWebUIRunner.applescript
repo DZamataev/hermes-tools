@@ -1,4 +1,4 @@
-property lifecycleScript : "/Users/frenzy/dev/hermes/hermes-tools/runner/hermes-webui-app.sh"
+property lifecycleScript : "@LIFECYCLE_SCRIPT@"
 property webUIURL : "http://127.0.0.1:8787"
 
 on run
