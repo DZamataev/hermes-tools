@@ -1,8 +1,8 @@
 diff --git a/acp_adapter/session.py b/acp_adapter/session.py
-index 293a441740..110a94ee25 100644
+index e1af050255..e91b3197b1 100644
 --- a/acp_adapter/session.py
 +++ b/acp_adapter/session.py
-@@ -399,6 +399,7 @@ class SessionManager:
+@@ -404,6 +404,7 @@ class SessionManager:
                  "provider": runtime.get("provider"), "api_mode": api_mode or runtime.get("api_mode"),
                  "base_url": base_url or runtime.get("base_url"), "api_key": runtime.get("api_key"),
                  "command": runtime.get("command"), "args": list(runtime.get("args") or []),
@@ -11,10 +11,10 @@ index 293a441740..110a94ee25 100644
          except Exception:
              logger.debug("ACP session falling back to default provider resolution", exc_info=True)
 diff --git a/agent/agent_init.py b/agent/agent_init.py
-index 30157f735f..a047a97d6f 100644
+index bd9b9478a6..17232caca6 100644
 --- a/agent/agent_init.py
 +++ b/agent/agent_init.py
-@@ -737,15 +737,19 @@ def _init_anthropic_client(agent, api_key, base_url, _provider_timeout):
+@@ -743,15 +743,19 @@ def _init_anthropic_client(agent, api_key, base_url, _provider_timeout):
  
      agent.api_key = effective_key
      agent._anthropic_api_key = effective_key
@@ -42,7 +42,7 @@ index 30157f735f..a047a97d6f 100644
      if not agent.quiet_mode:
          print(f"🤖 AI Agent initialized with model: {agent.model} (Anthropic native)")
          _print_key_banner(effective_key, "token")
-@@ -2091,6 +2095,7 @@ def _snapshot_primary_runtime(agent):
+@@ -2089,6 +2093,7 @@ def _snapshot_primary_runtime(agent):
          "api_mode": agent.api_mode,
          "api_key": getattr(agent, "api_key", ""),
          "request_overrides": dict(getattr(agent, "request_overrides", {}) or {}),
@@ -51,10 +51,10 @@ index 30157f735f..a047a97d6f 100644
          "use_prompt_caching": agent._use_prompt_caching,
          "use_native_cache_layout": agent._use_native_cache_layout,
 diff --git a/agent/agent_runtime_helpers.py b/agent/agent_runtime_helpers.py
-index f097dee742..554dc71cf6 100644
+index 8e6021d32d..200d17c214 100644
 --- a/agent/agent_runtime_helpers.py
 +++ b/agent/agent_runtime_helpers.py
-@@ -892,6 +892,7 @@ def _apply_primary_runtime_fields(agent, rt: Dict[str, Any]) -> None:
+@@ -898,6 +898,7 @@ def _apply_primary_runtime_fields(agent, rt: Dict[str, Any]) -> None:
      agent.api_key = rt["api_key"]
      agent._reasoning_echo_flag = rt.get("reasoning_echo_flag", False)
      agent.request_overrides = dict(rt.get("request_overrides") or {})
@@ -62,7 +62,7 @@ index f097dee742..554dc71cf6 100644
      agent._client_kwargs = dict(rt["client_kwargs"])
  
  
-@@ -903,6 +904,7 @@ def _build_anthropic_client_from_runtime(agent, rt: Dict[str, Any]) -> None:
+@@ -909,6 +910,7 @@ def _build_anthropic_client_from_runtime(agent, rt: Dict[str, Any]) -> None:
      agent._anthropic_client = build_anthropic_client(
          rt["anthropic_api_key"], rt["anthropic_base_url"],
          timeout=get_provider_request_timeout(agent.provider, agent.model),
@@ -70,7 +70,7 @@ index f097dee742..554dc71cf6 100644
      )
      agent._is_anthropic_oauth = rt["is_anthropic_oauth"]
      agent.client = None
-@@ -1791,7 +1793,7 @@ def _apply_switched_provider_request_overrides(agent, new_provider):
+@@ -1824,7 +1826,7 @@ def _apply_switched_provider_request_overrides(agent, new_provider):
  _SWITCH_SNAPSHOT_FIELDS = (
      "model", "provider", "requested_provider", "base_url", "api_mode", "api_key", "client",
      "_anthropic_client", "_anthropic_api_key", "_anthropic_base_url", "_is_anthropic_oauth",
@@ -79,7 +79,7 @@ index f097dee742..554dc71cf6 100644
      "_credential_pool", "_credential_pool_entry_id",
  )
  _MISSING = object()
-@@ -1866,7 +1868,7 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
+@@ -1910,7 +1912,7 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
          return
      if api_mode == "anthropic_messages":
          from agent.anthropic_adapter import build_anthropic_client
@@ -88,7 +88,7 @@ index f097dee742..554dc71cf6 100644
          # Only fall back to ANTHROPIC_TOKEN for native Anthropic; other anthropic_messages providers
          # must never receive Anthropic credentials.
          is_native_anthropic = new_provider == "anthropic"
-@@ -1884,11 +1886,12 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
+@@ -1928,11 +1930,12 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
                  )
          agent.api_key = agent._anthropic_api_key = effective_key
          agent._anthropic_base_url = base_url or getattr(agent, "_anthropic_base_url", None)
@@ -102,7 +102,7 @@ index f097dee742..554dc71cf6 100644
          agent.client = None
          agent._client_kwargs = {}
          return
-@@ -2044,6 +2047,7 @@ def _build_primary_runtime_snapshot(agent, api_mode) -> Dict[str, Any]:
+@@ -2088,6 +2091,7 @@ def _build_primary_runtime_snapshot(agent, api_mode) -> Dict[str, Any]:
          # PRE-switch overrides from the stale init snapshot.
          # See #75091.
          "request_overrides": dict(getattr(agent, "request_overrides", {}) or {}),
@@ -110,7 +110,7 @@ index f097dee742..554dc71cf6 100644
          "runtime_capabilities": dict(getattr(agent, "runtime_capabilities", {}) or {}),
          "compressor_model": getattr(cc, "model", agent.model),
          "compressor_base_url": getattr(cc, "base_url", agent.base_url),
-@@ -2123,6 +2127,7 @@ def switch_model(
+@@ -2167,6 +2171,7 @@ def switch_model(
      )
      snapshot = _snapshot_switch_state(agent)
      try:
@@ -119,11 +119,11 @@ index f097dee742..554dc71cf6 100644
              agent, new_model, new_provider, api_key, base_url, api_mode, old_provider, old_norm, new_norm
          )
 diff --git a/agent/anthropic_adapter.py b/agent/anthropic_adapter.py
-index 7815b1faca..10391f6c60 100644
+index f118e2ddb6..b878f4bace 100644
 --- a/agent/anthropic_adapter.py
 +++ b/agent/anthropic_adapter.py
-@@ -355,13 +355,15 @@ def _new_sdk_client(sdk, kwargs: Dict[str, Any], headers: Dict[str, str]):
-     return client
+@@ -361,13 +361,15 @@ def _new_sdk_client(sdk, kwargs: Dict[str, Any], headers: Dict[str, str]):
+     return sdk.Anthropic(**kwargs)
  
  
 -def _auth_style(api_key, base_url, normalized_base_url) -> str:
@@ -139,7 +139,7 @@ index 7815b1faca..10391f6c60 100644
      if _is_kimi_coding_endpoint(base_url):
          return "kimi"
      if _requires_bearer_auth(normalized_base_url):
-@@ -373,13 +375,18 @@ def _auth_style(api_key, base_url, normalized_base_url) -> str:
+@@ -379,13 +381,18 @@ def _auth_style(api_key, base_url, normalized_base_url) -> str:
      return "api_key"
  
  
@@ -160,7 +160,7 @@ index 7815b1faca..10391f6c60 100644
      sdk = _require_sdk("the Anthropic provider")
      if callable(api_key) and not isinstance(api_key, str):
          return _build_anthropic_client_with_bearer_hook(
-@@ -390,7 +397,7 @@ def build_anthropic_client(api_key, base_url: str = None, timeout: float = None,
+@@ -396,7 +403,7 @@ def build_anthropic_client(api_key, base_url: str = None, timeout: float = None,
      if "default_query" in kwargs:  # historical: this path also strips a stray trailing slash on Azure
          kwargs["base_url"] = normalized_base_url.rstrip("/")
      common_betas = _common_betas_for_base_url(normalized_base_url, drop_context_1m_beta=drop_context_1m_beta)
@@ -169,7 +169,7 @@ index 7815b1faca..10391f6c60 100644
      kwargs["auth_token" if style in ("bearer", "oauth") else "api_key"] = api_key
      headers = _beta_header(common_betas + _OAUTH_ONLY_BETAS if style == "oauth" else common_betas)
      if style == "kimi":
-@@ -530,7 +537,13 @@ def build_anthropic_kwargs(
+@@ -544,7 +551,13 @@ def build_anthropic_kwargs(
      ``is_oauth`` applies Claude Code compatibility transforms; ``preserve_dots`` keeps model-name
      dots (DashScope: qwen3.5-plus); a third-party ``base_url`` strips thinking signatures;
      ``fast_mode`` adds ``extra_body.speed="fast"`` plus the fast-mode beta on native Anthropic only."""
@@ -185,10 +185,10 @@ index 7815b1faca..10391f6c60 100644
      # Nous Portal routes on its own catalog ids (``anthropic/claude-opus-4.8``); normalizing would
      # make the model unresolvable there (prefix AND dots kept).
 diff --git a/agent/auxiliary_client.py b/agent/auxiliary_client.py
-index 9f77e631a1..456755465a 100644
+index b01b764098..9d23a0b969 100644
 --- a/agent/auxiliary_client.py
 +++ b/agent/auxiliary_client.py
-@@ -1784,7 +1784,8 @@ def _endpoint_speaks_anthropic_messages(base_url: str) -> bool:
+@@ -1815,7 +1815,8 @@ def _endpoint_speaks_anthropic_messages(base_url: str) -> bool:
  
  
  def _maybe_wrap_anthropic(
@@ -198,7 +198,7 @@ index 9f77e631a1..456755465a 100644
  ) -> Any:
      """Rewrap a plain OpenAI client in ``AnthropicAuxiliaryClient`` when the endpoint speaks Anthropic Messages.
  
-@@ -1814,7 +1815,7 @@ def _maybe_wrap_anthropic(
+@@ -1845,7 +1846,7 @@ def _maybe_wrap_anthropic(
          )
          return client_obj
      try:
@@ -207,7 +207,7 @@ index 9f77e631a1..456755465a 100644
      except Exception as exc:
          logger.warning(
              "Failed to build Anthropic client for %s (%s) — falling back to "
-@@ -1826,7 +1827,7 @@ def _maybe_wrap_anthropic(
+@@ -1857,7 +1858,7 @@ def _maybe_wrap_anthropic(
          "(model=%s, base_url=%s, api_mode=%s)",
          model, base_url[:60] if base_url else "", api_mode or "auto-detected",
      )
@@ -216,7 +216,7 @@ index 9f77e631a1..456755465a 100644
  
  
  def _read_nous_auth() -> Optional[dict]:
-@@ -2535,7 +2536,7 @@ def _runtime_main_value(field: str) -> Any:
+@@ -2587,7 +2588,7 @@ def _runtime_main_value(field: str) -> Any:
  def set_runtime_main(
      provider: str, model: str, *, requested_provider: str = "", base_url: str = "",
      api_key: Any = "", api_mode: str = "", auth_mode: str = "", session_id: str = "",
@@ -225,7 +225,7 @@ index 9f77e631a1..456755465a 100644
  ) -> contextvars.Token:
      """Record the current context's live main runtime for auxiliary routing.
  
-@@ -2557,6 +2558,10 @@ def set_runtime_main(
+@@ -2609,6 +2610,10 @@ def set_runtime_main(
          "auth_mode": (auth_mode or "").strip().lower(),
          "session_id": (session_id or "").strip(),
          "cache_scope": (cache_scope or "").strip(),
@@ -236,7 +236,7 @@ index 9f77e631a1..456755465a 100644
      }
      # Publish authoritative context before updating the locked mirrors.
      token = _RUNTIME_MAIN_CONTEXT.set(runtime)
-@@ -2849,7 +2854,7 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
+@@ -2909,7 +2914,7 @@ def _try_anthropic(explicit_api_key: str = None) -> Tuple[Optional[Any], Optiona
  
  
  _MAIN_RUNTIME_FIELDS = ("provider", "model", "base_url", "api_key", "api_mode", "auth_mode")
@@ -245,7 +245,7 @@ index 9f77e631a1..456755465a 100644
  
  
  def _normalize_main_runtime(main_runtime: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-@@ -2868,7 +2873,14 @@ def _normalize_main_runtime(main_runtime: Optional[Dict[str, Any]]) -> Dict[str,
+@@ -2928,7 +2933,14 @@ def _normalize_main_runtime(main_runtime: Optional[Dict[str, Any]]) -> Dict[str,
      normalized: Dict[str, Any] = {}
      for field in _MAIN_RUNTIME_CONTEXT_FIELDS:
          value = main_runtime.get(field)
@@ -261,7 +261,7 @@ index 9f77e631a1..456755465a 100644
              normalized[field] = value
          elif isinstance(value, str) and value.strip():
              normalized[field] = value.strip()
-@@ -4122,6 +4134,7 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
+@@ -4217,6 +4229,7 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
  
  def _try_main_provider_route(
      main_provider: str, main_model: str, runtime_base_url: str, runtime_api_key: Any, runtime_api_mode: str,
@@ -269,7 +269,7 @@ index 9f77e631a1..456755465a 100644
  ) -> Optional[Tuple[Any, str, str]]:
      """Step 1: route aux onto the main provider + main model; None if unusable."""
      if not (main_provider and main_model and main_provider not in {"auto", ""}):
-@@ -4161,6 +4174,7 @@ def _try_main_provider_route(
+@@ -4256,6 +4269,7 @@ def _try_main_provider_route(
      client, resolved = resolve_provider_client(
          resolved_provider, main_model, explicit_base_url=explicit_base_url,
          explicit_api_key=explicit_api_key, api_mode=runtime_api_mode or None,
@@ -277,7 +277,7 @@ index 9f77e631a1..456755465a 100644
      )
      if client is None:
          return None
-@@ -4205,7 +4219,9 @@ def _resolve_auto_route(
+@@ -4315,7 +4329,9 @@ def _resolve_auto_route(
      runtime = _normalize_main_runtime(main_runtime)
      _warn_stale_openai_base_url(runtime.get("provider", ""))
      main_provider, main_model, base_url, api_key, api_mode = _main_route_target(runtime, task)
@@ -288,11 +288,11 @@ index 9f77e631a1..456755465a 100644
      if routed is not None:
          return routed
      if task:
-@@ -4432,7 +4448,17 @@ def _wrap_transport(req: _ResolveRequest, client_obj: Any, final_model_str: str,
-                      "(api_mode=%s, model=%s, base_url=%s)",
-                      req.api_mode or "auto-detected", final_model_str, base_url_str[:60] if base_url_str else "")
-         return CodexAuxiliaryClient(client_obj, final_model_str)
--    return _maybe_wrap_anthropic(client_obj, final_model_str, api_key_str, base_url_str, req.api_mode)
+@@ -4584,7 +4600,17 @@ def _wrap_transport(req: _ResolveRequest, client_obj: Any, final_model_str: str,
+     # A profile that declares the Messages wire (commandcode-anthropic) is on it whatever the URL
+     # looks like; the same declaration gates ``_reasoning_config`` in _build_call_kwargs.
+     api_mode = req.api_mode or _profile_declared_messages_wire(req.provider)
+-    return _maybe_wrap_anthropic(client_obj, final_model_str, api_key_str, base_url_str, api_mode)
 +    runtime_capabilities = (
 +        req.main_runtime.get("capabilities") if isinstance(req.main_runtime, dict) else None
 +    )
@@ -301,13 +301,13 @@ index 9f77e631a1..456755465a 100644
 +        and runtime_capabilities.get("anthropic_oauth_proxy", False)
 +    )
 +    return _maybe_wrap_anthropic(
-+        client_obj, final_model_str, api_key_str, base_url_str, req.api_mode,
++        client_obj, final_model_str, api_key_str, base_url_str, api_mode,
 +        force_oauth=force_oauth,
 +    )
  
  
- def _route_client(req: _ResolveRequest, client_obj: Any, final_model_str: Optional[str]) -> _ResolveResult:
-@@ -4641,15 +4667,29 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
+ def _profile_declared_messages_wire(provider: str) -> Optional[str]:
+@@ -4811,15 +4837,29 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
      # the Anthropic SDK sees the original (un-rewritten) URL.
      # Mirrors the anonymous-custom branch in _try_custom_endpoint(). See #15033.
      if entry_api_mode == "anthropic_messages":
@@ -339,7 +339,7 @@ index 9f77e631a1..456755465a 100644
      client = _named_custom_openai_wire_client(custom_base, custom_key)
      # codex_responses, or auto-detect via _wrap_transport (which reads the task-level api_mode).
      if entry_api_mode == "codex_responses":
-@@ -5181,6 +5221,8 @@ def _runtime_cache_discriminator(field: str, value: Any) -> Any:
+@@ -5351,6 +5391,8 @@ def _runtime_cache_discriminator(field: str, value: Any) -> Any:
          return _CallableCacheDiscriminator(value)
      if field == "api_key" and isinstance(value, str) and value:
          return ("api-key-digest", hashlib.blake2b(value.encode("utf-8"), digest_size=16).digest())
@@ -348,7 +348,7 @@ index 9f77e631a1..456755465a 100644
      return value
  
  
-@@ -5192,7 +5234,10 @@ def _client_cache_key(
+@@ -5362,7 +5404,10 @@ def _client_cache_key(
  ) -> tuple:
      runtime = _normalize_main_runtime(main_runtime)
      # `auto` resolves through the main runtime and task-specific policy, so both join the key.
@@ -361,10 +361,10 @@ index 9f77e631a1..456755465a 100644
      pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
      # Model MUST be in the key: concurrent calls to the same endpoint with different models would
 diff --git a/agent/background_review.py b/agent/background_review.py
-index 9ed654f098..5d92a40e9c 100644
+index 5979b1134b..c877ba0d8f 100644
 --- a/agent/background_review.py
 +++ b/agent/background_review.py
-@@ -213,6 +213,7 @@ def _resolve_review_runtime(agent: Any, task_cfg: Optional[Dict[str, Any]] = Non
+@@ -214,6 +214,7 @@ def _resolve_review_runtime(agent: Any, task_cfg: Optional[Dict[str, Any]] = Non
          "api_key": parent_runtime.get("api_key") or None, "base_url": parent_runtime.get("base_url") or None,
          "api_mode": "codex_responses" if parent_api_mode == "codex_app_server" else parent_api_mode,
          "credential_pool": getattr(agent, "_credential_pool", None),
@@ -372,7 +372,7 @@ index 9ed654f098..5d92a40e9c 100644
          "request_overrides": dict(getattr(agent, "request_overrides", {}) or {}),
          "max_tokens": getattr(agent, "max_tokens", None), "command": getattr(agent, "acp_command", None),
          "args": list(getattr(agent, "acp_args", []) or []), "routed": False,
-@@ -233,7 +234,9 @@ def _resolve_review_runtime(agent: Any, task_cfg: Optional[Dict[str, Any]] = Non
+@@ -234,7 +235,9 @@ def _resolve_review_runtime(agent: Any, task_cfg: Optional[Dict[str, Any]] = Non
          )
          return {
              "provider": rp.get("provider") or task_provider, "model": rp.get("model") or task_model,
@@ -383,7 +383,7 @@ index 9ed654f098..5d92a40e9c 100644
              "request_overrides": dict(rp.get("request_overrides") or {}),
              "args": list(rp.get("args") or []), "routed": True,
          }
-@@ -829,6 +832,7 @@ def _fork_init_kwargs(agent: Any, rt: Dict[str, Any], routed: bool, max_iteratio
+@@ -876,6 +879,7 @@ def _fork_init_kwargs(agent: Any, rt: Dict[str, Any], routed: bool, max_iteratio
          "platform": agent.platform, "provider": rt.get("provider") or agent.provider,
          "api_mode": rt.get("api_mode"), "base_url": rt.get("base_url") or None,
          "api_key": rt.get("api_key") or None, "credential_pool": rt.get("credential_pool"),
@@ -392,10 +392,10 @@ index 9ed654f098..5d92a40e9c 100644
          "enabled_toolsets": getattr(agent, "enabled_toolsets", None),
          "disabled_toolsets": getattr(agent, "disabled_toolsets", None), "skip_memory": True,
 diff --git a/agent/client_lifecycle.py b/agent/client_lifecycle.py
-index 071b6c9855..4b5976ab58 100644
+index 2fc520fa06..f54f3b2e63 100644
 --- a/agent/client_lifecycle.py
 +++ b/agent/client_lifecycle.py
-@@ -463,29 +463,39 @@ class ClientLifecycleMixin:
+@@ -468,29 +468,39 @@ class ClientLifecycleMixin:
          self._abort_request_slot_client(_OPENAI_SLOT, client, reason=reason)
  
      def _request_anthropic_client_key(self) -> tuple:
@@ -441,7 +441,7 @@ index 071b6c9855..4b5976ab58 100644
      def _create_request_anthropic_client(self, *, reason: str) -> Any:
          """Build (or reuse) a request-local Anthropic client for one in-flight call.
 diff --git a/agent/curator.py b/agent/curator.py
-index f6008da773..3031d962c5 100644
+index d0854145a5..ff4129ee38 100644
 --- a/agent/curator.py
 +++ b/agent/curator.py
 @@ -1030,6 +1030,7 @@ def _run_llm_review(prompt: str) -> Dict[str, Any]:
@@ -453,10 +453,10 @@ index f6008da773..3031d962c5 100644
              # No ``terminal``: a shell mv/cp/rm under the skills tree writes bytes
              # with NO ledger entry, so rollback would restore a hollow skill. Every
 diff --git a/agent/turn_context.py b/agent/turn_context.py
-index 6ecb93a313..84dcc4f738 100644
+index b4b7566272..fce05ac08c 100644
 --- a/agent/turn_context.py
 +++ b/agent/turn_context.py
-@@ -171,7 +171,9 @@ def _maybe_title_session_at_turn_start(agent: Any, messages: List[Any]) -> None:
+@@ -183,7 +183,9 @@ def _maybe_title_session_at_turn_start(agent: Any, messages: List[Any]) -> None:
          # Snapshot runtime identity so the background titler can skip if the user
          # switches models before it fires.
          main_runtime = {
@@ -467,7 +467,7 @@ index 6ecb93a313..84dcc4f738 100644
          }
          # See #19027.
          maybe_auto_title(
-@@ -385,6 +387,7 @@ def _publish_runtime_main(agent: Any) -> None:
+@@ -435,6 +437,7 @@ def _publish_runtime_main(agent: Any) -> None:
              **{k: _str_attr(agent, k) for k in (
                  "requested_provider", "base_url", "api_key", "api_mode", "auth_mode", "session_id"
              )},
@@ -476,10 +476,10 @@ index 6ecb93a313..84dcc4f738 100644
          )
  
 diff --git a/cron/scheduler.py b/cron/scheduler.py
-index 70c1a169ee..f171f8d7d9 100644
+index e47a517ff5..9d133ba3d4 100644
 --- a/cron/scheduler.py
 +++ b/cron/scheduler.py
-@@ -2247,6 +2247,7 @@ def _construct_cron_agent(AIAgent, job: dict, _cfg: dict, setup: _CronAgentSetup
+@@ -2164,6 +2164,7 @@ def _construct_cron_agent(AIAgent, job: dict, _cfg: dict, setup: _CronAgentSetup
          provider=runtime.get("provider"),
          requested_provider=runtime.get("requested_provider"),
          api_mode=runtime.get("api_mode"),
@@ -488,7 +488,7 @@ index 70c1a169ee..f171f8d7d9 100644
          acp_command=runtime.get("command"),
          acp_args=runtime.get("args"),
 diff --git a/hermes_cli/cli_agent_setup_mixin.py b/hermes_cli/cli_agent_setup_mixin.py
-index f1ca63a88e..3cf1d136aa 100644
+index 3fedeb9be7..46cea721fd 100644
 --- a/hermes_cli/cli_agent_setup_mixin.py
 +++ b/hermes_cli/cli_agent_setup_mixin.py
 @@ -41,14 +41,16 @@ def _current_runtime(cli) -> dict:
@@ -510,10 +510,10 @@ index f1ca63a88e..3cf1d136aa 100644
  
  
  def _keyless_custom_base(base_url) -> bool:
-@@ -198,6 +200,12 @@ class CLIAgentSetupMixin:
-         api_key = runtime.get("api_key")
-         base_url = runtime.get("base_url")
-         resolved_provider = runtime.get("provider", "openrouter")
+@@ -207,6 +209,12 @@ class CLIAgentSetupMixin:
+             # created by the boot bootstrap before this point, never here; this prints the one-time
+             # "free tier is here" notice the first time an identity is seen beside an own key.
+             self._maybe_print_free_tier_available_notice()
 +        runtime_capabilities = runtime.get("capabilities")
 +        resolved_capabilities = {
 +            key: value for key, value in (
@@ -523,7 +523,7 @@ index f1ca63a88e..3cf1d136aa 100644
          resolved_routing = (
              resolved_provider, runtime.get("api_mode", self.api_mode), runtime.get("command"),
              list(runtime.get("args") or []))
-@@ -226,7 +234,9 @@ class CLIAgentSetupMixin:
+@@ -235,7 +243,9 @@ class CLIAgentSetupMixin:
              return False
          credentials_changed = api_key != self.api_key or base_url != self.base_url
          routing_changed = resolved_routing != (self.provider, self.api_mode, self.acp_command, self.acp_args)
@@ -533,7 +533,7 @@ index f1ca63a88e..3cf1d136aa 100644
          self._credential_pool = runtime.get("credential_pool")
          self._provider_source = runtime.get("source")
          self.api_key = api_key
-@@ -259,7 +269,7 @@ class CLIAgentSetupMixin:
+@@ -268,7 +278,7 @@ class CLIAgentSetupMixin:
          model_changed = self._normalize_model_for_provider(resolved_provider)
  
          # AIAgent/OpenAI client holds auth at init, so rebuild on key/routing/model change.
@@ -542,7 +542,7 @@ index f1ca63a88e..3cf1d136aa 100644
              self.agent = None
              self._active_agent_route_signature = None
          return True
-@@ -518,6 +528,7 @@ class CLIAgentSetupMixin:
+@@ -541,6 +551,7 @@ class CLIAgentSetupMixin:
                  requested_provider=runtime.get("requested_provider"),
                  api_mode=runtime.get("api_mode"), acp_command=runtime.get("command"),
                  acp_args=runtime.get("args"), credential_pool=runtime.get("credential_pool"),
@@ -551,10 +551,10 @@ index f1ca63a88e..3cf1d136aa 100644
                  run_budget_seconds=getattr(self, "run_budget_seconds", None),
                  enabled_toolsets=self.enabled_toolsets, disabled_toolsets=self.disabled_toolsets,
 diff --git a/hermes_cli/cli_commands_mixin.py b/hermes_cli/cli_commands_mixin.py
-index 4355234651..c4ca8b421f 100644
+index b7c0c9c0a9..3cce9f0fbc 100644
 --- a/hermes_cli/cli_commands_mixin.py
 +++ b/hermes_cli/cli_commands_mixin.py
-@@ -1930,7 +1930,7 @@ class CLICommandsMixin:
+@@ -1942,7 +1942,7 @@ class CLICommandsMixin:
                      model=turn_route["model"], acp_command=runtime.get("command"),
                      acp_args=runtime.get("args"), max_iterations=self.max_turns,
                      **{k: runtime.get(k) for k in ("api_key", "base_url", "provider", "api_mode",
@@ -564,10 +564,10 @@ index 4355234651..c4ca8b421f 100644
                      session_db=self._session_db, reasoning_config=self.reasoning_config,
                      service_tier=self.service_tier,
 diff --git a/hermes_cli/model_switch.py b/hermes_cli/model_switch.py
-index be1a095418..9e8452e7df 100644
+index 410d748368..b214d1595a 100644
 --- a/hermes_cli/model_switch.py
 +++ b/hermes_cli/model_switch.py
-@@ -1050,6 +1050,7 @@ class _Switch:
+@@ -1063,6 +1063,7 @@ class _Switch:
      base_url: str = ""
      api_mode: str = ""
      validation_headers: dict = field(default_factory=dict)
@@ -575,7 +575,7 @@ index be1a095418..9e8452e7df 100644
      suppress_ollama_headers: bool = False
      validation: dict = field(default_factory=dict)
  
-@@ -1071,6 +1072,10 @@ class _Switch:
+@@ -1084,6 +1085,10 @@ class _Switch:
          rt = resolve_runtime_provider(target_model=self.new_model, **kwargs)
          self.api_key, self.base_url = rt.get("api_key", ""), rt.get("base_url", "")
          self.api_mode = rt.get("api_mode", "")
@@ -586,7 +586,7 @@ index be1a095418..9e8452e7df 100644
          self.validation_headers = rt.get("extra_headers") or self.validation_headers
  
  
-@@ -1428,6 +1433,7 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
+@@ -1489,6 +1494,7 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
      runtime_capabilities = resolve_native_compaction_capabilities(
          model=st.new_model, base_url=st.base_url, provider=st.target_provider,
          is_codex_backend=st.target_provider.strip().lower() == "openai-codex")
@@ -595,34 +595,34 @@ index be1a095418..9e8452e7df 100644
  
      warnings = [w for w in (st.validation.get("message"), _check_hermes_model_warning(st.new_model)) if w]
 diff --git a/hermes_cli/oneshot.py b/hermes_cli/oneshot.py
-index 59afaa5a64..4ed07d8a54 100644
+index 5c3603f2c4..ea23f84d0b 100644
 --- a/hermes_cli/oneshot.py
 +++ b/hermes_cli/oneshot.py
-@@ -398,6 +398,7 @@ def _run_agent(
-             platform="cli",
+@@ -487,6 +487,7 @@ def _run_agent(
              session_db=session_db,
+             session_id=resume_sid,
              credential_pool=runtime.get("credential_pool"),
 +            capabilities=runtime.get("capabilities"),
              fallback_model=get_fallback_chain(cfg) or None,
              ephemeral_system_prompt=skills_prompt,
-             # The only interactive callback wired: no user sits at a terminal. Sudo prompts gate on
+             reasoning_config=reasoning_config,
 diff --git a/tui_gateway/agent_callbacks.py b/tui_gateway/agent_callbacks.py
-index 36f421b90b..6fe0ab44db 100644
+index c30dc36226..9712230eeb 100644
 --- a/tui_gateway/agent_callbacks.py
 +++ b/tui_gateway/agent_callbacks.py
-@@ -276,6 +276,7 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
+@@ -300,6 +300,7 @@ def _background_agent_kwargs(agent, task_id: str) -> dict:
          "reasoning_config": g("reasoning_config") or _load_reasoning_config(str(g("model", "") or "")),
          "service_tier": g("service_tier") or _load_service_tier(),
          "request_overrides": dict(g("request_overrides", {}) or {}),
 +        "capabilities": dict(g("capabilities", {}) or {}),
-         "platform": "tui", "session_db": _get_db(), "fallback_model": fallback}
- 
- 
+         # The side agent persists into the PARENT's store: a named-profile chat's ``bg_*`` rows
+         # belong to that profile's state.db, not the launch handle.
+         "platform": "tui", "session_db": getattr(agent, "_session_db", None) or _get_db(), "fallback_model": fallback}
 diff --git a/tui_gateway/methods_prompt.py b/tui_gateway/methods_prompt.py
-index fdc53a2530..eb685f8edd 100644
+index dde0620f74..c21e244f07 100644
 --- a/tui_gateway/methods_prompt.py
 +++ b/tui_gateway/methods_prompt.py
-@@ -980,7 +980,7 @@ def _(rid, params: dict) -> dict:
+@@ -1014,7 +1014,7 @@ def _(rid, params: dict) -> dict:
      snapshot = list(getattr(agent, "_session_messages", None) or session.get("history") or [])
      main_runtime = {
          k: getattr(agent, k, None)
@@ -632,10 +632,10 @@ index fdc53a2530..eb685f8edd 100644
      def body():
          from agent.side_question import answer_side_question
 diff --git a/tui_gateway/server.py b/tui_gateway/server.py
-index 9973dde208..dbdd54f4f6 100644
+index 0787278f1b..8a9d666290 100644
 --- a/tui_gateway/server.py
 +++ b/tui_gateway/server.py
-@@ -2273,6 +2273,7 @@ def _make_agent(
+@@ -2356,6 +2356,7 @@ def _make_agent(
      agent = AIAgent(
          model=model, max_iterations=_cfg_max_turns(cfg, 500), provider=runtime.get("provider"),
          base_url=runtime.get("base_url"), api_key=runtime.get("api_key"), api_mode=runtime.get("api_mode"),
@@ -643,7 +643,7 @@ index 9973dde208..dbdd54f4f6 100644
          acp_command=runtime.get("command"), acp_args=runtime.get("args"),
          credential_pool=runtime.get("credential_pool"), quiet_mode=True,
          verbose_logging=False,  # DEBUG agent logging; independent of tool_progress_mode
-@@ -2721,9 +2722,13 @@ def _main_runtime_from_agent(agent) -> dict | None:
+@@ -2812,9 +2813,13 @@ def _main_runtime_from_agent(agent) -> dict | None:
      if agent is None:
          return None
      runtime: dict = {}
@@ -660,10 +660,10 @@ index 9973dde208..dbdd54f4f6 100644
          elif field == "api_key" and callable(value):
              runtime[field] = value
 diff --git a/website/docs/user-guide/configuring-models.md b/website/docs/user-guide/configuring-models.md
-index 2378ea231a..c030ba6047 100644
+index e2f501c8f0..52cde3bac8 100644
 --- a/website/docs/user-guide/configuring-models.md
 +++ b/website/docs/user-guide/configuring-models.md
-@@ -207,6 +207,29 @@ providers:
+@@ -218,6 +218,29 @@ providers:
        openai_native_compaction: true
  ```
  
