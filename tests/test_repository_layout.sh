@@ -89,3 +89,9 @@ for script in $(cd "$ROOT" && bun --print 'Object.keys(require("./package.json")
   print -r -- "$help_output" | grep -Fq "bun run $script" ||
     fail "bun run help never mentions the '$script' script"
 done
+
+# `bun run setup` must point at the real installer. A script entry that silently
+# stops matching the file is invisible until someone runs it.
+setup_command="$(cd "$ROOT" && bun --print 'require("./package.json").scripts.setup')"
+[[ "$setup_command" == *setup_hermes_tools.sh* ]] ||
+  fail "the 'setup' script does not run setup_hermes_tools.sh: $setup_command"

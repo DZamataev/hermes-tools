@@ -36,7 +36,7 @@ Suites are safe to run at once: each builds its own `mktemp` sandbox and fakes
 ## Setup
 
 ```bash
-./setup_hermes_tools.sh
+bun run setup              # or ./setup_hermes_tools.sh without bun
 ```
 
 Installs `comp-count` and `provider-limits` under `~/.hermes` and sets the

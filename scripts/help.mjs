@@ -31,6 +31,19 @@ const docs = {
       'bun run check provider webui   # several by substring'
     ]
   },
+  setup: {
+    summary: 'Install both plugins into ~/.hermes and enable the backend.',
+    detail: [
+      'Installs comp-count and provider-limits, sets the provider-limits',
+      'backend gate, and restarts the Hermes gateway only when the backend',
+      'actually changed. Safe to re-run: unchanged plugins mean no restart.',
+      'It installs plugins and nothing else — provider and model settings are',
+      'yours. The desktop half still needs one manual toggle in',
+      'Capabilities → Plugins; the loader forces a package half off.',
+      'Also runnable without bun: ./setup_hermes_tools.sh'
+    ],
+    examples: ['bun run setup']
+  },
   bootstrap: {
     summary: 'Fetch the hermes-webui submodule. Run once after cloning.',
     examples: ['bun run bootstrap']
@@ -72,7 +85,7 @@ const docs = {
 // Grouped for reading order; anything ungrouped still gets printed below.
 const groups = [
   ['Everyday', ['check', 'help']],
-  ['Setup', ['bootstrap', 'app']],
+  ['Setup', ['bootstrap', 'setup', 'app']],
   ['Hermes WebUI service', ['webui:enable', 'webui:status', 'webui:restart', 'webui:disable']]
 ]
 
@@ -103,11 +116,8 @@ for (const [title, names] of groups) {
   }
 }
 
-console.log(`Not a bun script: ./setup_hermes_tools.sh installs both plugins into
-~/.hermes and enables the provider-limits backend. It is a plain shell script
-because it runs on machines that have no bun.
-
-The provider-limits bench takes a flag bun scripts do not pass through:
+console.log(`Not a bun script: the provider-limits bench takes a flag that bun
+scripts do not pass through, so run it directly:
 ${pad}$ plugins/provider-limits/tests/run.sh --e2e   # live upstreams, needs keys
 
 Full documentation: README.md`)

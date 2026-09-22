@@ -5,6 +5,7 @@
   "scripts": {
     "help": "bun run scripts/help.mjs",
     "check": "bun run scripts/check.mjs",
+    "setup": "./setup_hermes_tools.sh",
     "app": "zsh runner/build-app.sh",
     "bootstrap": "git submodule update --init --recursive",
     "webui:enable": "zsh runner/hermes-webui-launchd.sh enable",
