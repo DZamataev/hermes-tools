@@ -21,7 +21,7 @@
 - **`GAP_SECONDS = 3600.0`** — the pause that splits one working segment from the next.
 - **`SPARK_BUCKETS = 20`** — the sparkline width, everywhere.
 - **`BLOCKS = " ▁▂▃▄▅▆▇█"`** — bucket glyphs, index 0 unused for non-empty buckets (see the floor rule in Task 3).
-- **Panel strings are Russian.** The existing `provider-limits` panel is English and stays English; do not touch it.
+- **Panel copy is localized, never hardcoded in one language.** The plugin ships its own locale bundles, registers them with `ctx.i18n.register(...)` in `register`, and reads them through `usePluginI18n('comp-count')`; the active language is the app's `display.language`. `en` is mandatory — it is the fallback when a key is missing from the active locale — and `ru` ships beside it. Any helper that produces words takes the translator `t` as an argument; helpers that produce only numbers and glyphs do not. Do not touch `provider-limits`, whose panel is English by its own choice.
 - **Never write a secret, key, or token into this package.** Before any commit that touches tracked files, `gitleaks dir --redact .` must report no new findings beyond the pre-existing ones in `.env.local` and the `hermes-webui/` submodule fixtures.
 
 ---
@@ -764,12 +764,13 @@ Pure functions first, with no React and no SDK in sight. They are where the visu
 - Consumes: the segment shape from Task 1.
 - Produces, all named exports of `desktop/plugin.js`:
   - `BLOCKS: string` — `" ▁▂▃▄▅▆▇█"`.
+  - `LOCALES: object` — `{ en: {...}, ru: {...} }`, the bundles `ctx.i18n.register` takes.
   - `sparkline(buckets: number[], peak: number): string` — 20 glyphs.
   - `markerRow(segment): string` — 20 chars, `▲` where a compaction falls, spaces elsewhere.
-  - `formatDuration(seconds: number): string` — `"45м"`, `"1ч12м"`, `"2д3ч"`.
-  - `formatSpan(startSeconds: number, endSeconds: number): string` — `"03.09 16:35–17:47"`, carrying the end date when it differs.
-  - `routeLabel(segment): string` — `"m1 · p1 → m2 · p2"`, or `"маршрут неизвестен"` when empty.
-  - `toolsLabel(segment): string` — `"patch×369, terminal×288"`, or `""`.
+  - `formatDuration(seconds: number, t: PluginTranslate): string` — `"45m"` / `"45м"`, `"1h12m"` / `"1ч12м"`, `"2d3h"` / `"2д3ч"`, per the active locale.
+  - `formatSpan(startSeconds: number, endSeconds: number): string` — `"03.09 16:35–17:47"`, carrying the end date when it differs. Digits only, so it takes no translator.
+  - `routeLabel(segment, t: PluginTranslate): string` — `"m1 · p1 → m2 · p2"`, or `t('route.unknown')` when empty.
+  - `toolsLabel(segment): string` — `"patch×369, terminal×288"`, or `""`. Tool names are identifiers, not prose; no translator.
   - `list(value): unknown[]` — defensive array read.
 
 - [ ] **Step 1: Write the failing renderer test**
@@ -817,6 +818,9 @@ export const host = { state: { focusedUsage: null, focusedStoredSessionId: null,
 export const useValue = value => (globalThis.__probeValues ?? new Map()).get(value) ?? value
 export const useQuery = () => globalThis.__probeQuery ?? { data: null, error: null, isFetching: false }
 export const useQueryClient = () => ({ setQueryData() {} })
+// The probe drives locale resolution through this global: the checks exercise
+// BOTH bundles, so a key present in en but missing in ru is a visible failure.
+export const usePluginI18n = () => globalThis.__probeTranslate ?? (key => key)
 """)
 (react / "package.json").write_text(json.dumps({
     "name": "react", "type": "module",
@@ -832,7 +836,7 @@ shutil.copy(PLUGIN, root / "plugin.js")
 
 (root / "probe.mjs").write_text(r"""
 import {
-  BLOCKS, formatDuration, formatSpan, list, markerRow, routeLabel, sparkline, toolsLabel
+  BLOCKS, formatDuration, formatSpan, list, LOCALES, markerRow, routeLabel, sparkline, toolsLabel
 } from './plugin.js'
 
 const failures = []
@@ -841,6 +845,16 @@ const check = (name, ok, detail = '') => {
   checks++
   if (!ok) failures.push(name + (detail ? ` — ${detail}` : ''))
 }
+
+// A translator over one bundle, resolving dot-paths and calling function leaves
+// — the same resolution the app's plugin i18n performs, minus React.
+const translator = locale => (key, ...args) => {
+  const leaf = key.split('.').reduce((node, part) => (node ?? {})[part], LOCALES[locale])
+  if (leaf === undefined) return `MISSING:${key}`
+  return typeof leaf === 'function' ? leaf(...args) : leaf
+}
+const en = translator('en')
+const ru = translator('ru')
 
 // --- sparkline --------------------------------------------------------------
 
@@ -874,10 +888,15 @@ check('no-markers-no-row', markerRow({ ...seg, compactions: [] }).trim() === '')
 
 // --- duration ---------------------------------------------------------------
 
-check('minutes', formatDuration(45 * 60) === '45м', formatDuration(45 * 60))
-check('hours', formatDuration(72 * 60) === '1ч12м', formatDuration(72 * 60))
-check('days', formatDuration(51 * 3600) === '2д3ч', formatDuration(51 * 3600))
-check('sub-minute', formatDuration(30) === '<1м', formatDuration(30))
+check('minutes-en', formatDuration(45 * 60, en) === '45m', formatDuration(45 * 60, en))
+check('minutes-ru', formatDuration(45 * 60, ru) === '45м', formatDuration(45 * 60, ru))
+check('hours-en', formatDuration(72 * 60, en) === '1h12m', formatDuration(72 * 60, en))
+check('hours-ru', formatDuration(72 * 60, ru) === '1ч12м', formatDuration(72 * 60, ru))
+check('days-en', formatDuration(51 * 3600, en) === '2d3h', formatDuration(51 * 3600, en))
+check('days-ru', formatDuration(51 * 3600, ru) === '2д3ч', formatDuration(51 * 3600, ru))
+// Under a minute is "<1m", not the "0m" a floor produces.
+check('sub-minute-en', formatDuration(30, en) === '<1m', formatDuration(30, en))
+check('sub-minute-ru', formatDuration(30, ru) === '<1м', formatDuration(30, ru))
 
 // --- span -------------------------------------------------------------------
 
@@ -890,17 +909,42 @@ check('cross-day-span', crossDay === '03.09 23:10–04.09 01:05', crossDay)
 
 // --- labels -----------------------------------------------------------------
 
-check('route-single', routeLabel({ routes: [{ model: 'm1', provider: 'p1' }] }) === 'm1 · p1')
+check('route-single', routeLabel({ routes: [{ model: 'm1', provider: 'p1' }] }, en) === 'm1 · p1')
 check('route-multi',
-      routeLabel({ routes: [{ model: 'm1', provider: 'p1' }, { model: 'm2', provider: 'p2' }] })
+      routeLabel({ routes: [{ model: 'm1', provider: 'p1' }, { model: 'm2', provider: 'p2' }] }, en)
       === 'm1 · p1 → m2 · p2')
-check('route-empty', routeLabel({ routes: [] }) === 'маршрут неизвестен')
+check('route-empty-en', routeLabel({ routes: [] }, en) === 'unknown route',
+      routeLabel({ routes: [] }, en))
+check('route-empty-ru', routeLabel({ routes: [] }, ru) === 'маршрут неизвестен',
+      routeLabel({ routes: [] }, ru))
 // A route with no provider must not render a dangling separator.
-check('route-no-provider', routeLabel({ routes: [{ model: 'm1', provider: '' }] }) === 'm1')
+check('route-no-provider', routeLabel({ routes: [{ model: 'm1', provider: '' }] }, en) === 'm1')
 
+// Tool names are identifiers, not prose: identical in every locale.
 check('tools', toolsLabel({ topTools: [{ name: 'patch', count: 9 }, { name: 'terminal', count: 4 }] })
       === 'patch×9, terminal×4')
 check('tools-empty', toolsLabel({ topTools: [] }) === '')
+
+// --- locale bundles ---------------------------------------------------------
+
+// `en` is the fallback the app resolves against, so every key the plugin uses
+// must exist there. And a key present in `en` but missing in `ru` would strand
+// an English sentence inside a Russian panel — the exact defect this section
+// guards.
+const paths = (node, prefix = '') => Object.entries(node).flatMap(([key, value]) => {
+  const path = prefix ? `${prefix}.${key}` : key
+  return value && typeof value === 'object' ? paths(value, path) : [path]
+})
+const enPaths = paths(LOCALES.en).sort()
+const ruPaths = paths(LOCALES.ru).sort()
+check('en-bundle-present', enPaths.length > 0)
+check('locales-have-same-keys', JSON.stringify(enPaths) === JSON.stringify(ruPaths),
+      JSON.stringify({ missingInRu: enPaths.filter(p => !ruPaths.includes(p)),
+                       extraInRu: ruPaths.filter(p => !enPaths.includes(p)) }))
+// Nothing the panel renders may fall through to the raw key.
+check('no-missing-keys', ![
+  routeLabel({ routes: [] }, en), formatDuration(600, en), formatDuration(30, en)
+].some(text => text.startsWith('MISSING:')))
 
 // --- defensive guards -------------------------------------------------------
 
@@ -911,9 +955,9 @@ check('list-guards-scalar', list(42).length === 0)
 check('list-drops-non-objects', list([{ a: 1 }, null, 'x', 7]).length === 1)
 check('spark-guards-garbage', sparkline(null, 5).length === 20)
 check('markers-guard-garbage', markerRow({}).length === 20)
-check('route-guards-garbage', routeLabel({}) === 'маршрут неизвестен')
+check('route-guards-garbage', routeLabel({}, en) === 'unknown route')
 check('tools-guards-garbage', toolsLabel({}) === '')
-check('duration-guards-garbage', typeof formatDuration(NaN) === 'string')
+check('duration-guards-garbage', typeof formatDuration(NaN, en) === 'string')
 
 console.log(`  ${checks - failures.length}/${checks} checks passed`)
 for (const failure of failures) console.log(`  ✗ ${failure}`)
@@ -955,7 +999,7 @@ Create `plugins/comp-count/desktop/plugin.js` with the imports and pure helpers.
 // chip keeps working off live state.
 import {
   Button, host, Popover, PopoverContent, PopoverTrigger, STATUSBAR_AREAS,
-  useQuery, useValue
+  useQuery, usePluginI18n, useValue
 } from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
@@ -964,6 +1008,53 @@ const ID = 'comp-count'
 // never uses it (see `sparkline`).
 const BLOCKS = ' ▁▂▃▄▅▆▇█'
 const SPARK_BUCKETS = 20
+
+// Locale bundles, registered under this plugin's id at load. The panel follows
+// the app's `display.language`; it does not pick a language of its own. `en` is
+// the fallback the resolver drops to when a key is missing, so it must carry
+// every key the panel uses — the renderer suite asserts both bundles agree.
+const LOCALES = {
+  en: {
+    title: 'Session timeline',
+    segments: n => `${n} segments`,
+    noSession: 'No session yet.',
+    noSegments: 'No working segments in this session yet.',
+    backendDown: error =>
+      `Backend unavailable — add "comp-count" to plugins.enabled and restart the gateway. (${error})`,
+    chipTitle: n => `Compactions in this session: ${n}`,
+    route: { unknown: 'unknown route' },
+    counts: {
+      prompts: n => `${n} prompts`,
+      tools: n => `${n} tool calls`
+    },
+    duration: {
+      lessThanMinute: '<1m',
+      minutes: m => `${m}m`,
+      hoursMinutes: (h, m) => `${h}h${m}m`,
+      daysHours: (d, h) => `${d}d${h}h`
+    }
+  },
+  ru: {
+    title: 'Хронология сессии',
+    segments: n => `${n} отрезков`,
+    noSession: 'Сессия ещё не начата.',
+    noSegments: 'В этой сессии ещё нет рабочих отрезков.',
+    backendDown: error =>
+      `Бэкенд недоступен — добавьте "comp-count" в plugins.enabled и перезапустите шлюз. (${error})`,
+    chipTitle: n => `Компакций в этой сессии: ${n}`,
+    route: { unknown: 'маршрут неизвестен' },
+    counts: {
+      prompts: n => `${n} промптов`,
+      tools: n => `${n} вызовов инструментов`
+    },
+    duration: {
+      lessThanMinute: '<1м',
+      minutes: m => `${m}м`,
+      hoursMinutes: (h, m) => `${h}ч${m}м`,
+      daysHours: (d, h) => `${d}д${h}ч`
+    }
+  }
+}
 
 /** Defensive array read: the payload crosses a process boundary, and one
  *  malformed field must degrade a row, never throw during render and take the
@@ -1013,20 +1104,21 @@ function markerRow(segment) {
   return row.join('')
 }
 
-/** How long the stretch ran. Under a minute is `<1м`, not the `0м` a floor
- *  produces — a two-event segment is short, not instantaneous. */
-function formatDuration(seconds) {
+/** How long the stretch ran, in the active locale's units. Under a minute is
+ *  the `lessThanMinute` string, not the `0m` a floor produces — a two-event
+ *  segment is short, not instantaneous. */
+function formatDuration(seconds, t) {
   const total = num(seconds)
   if (total === null || total < 0) {
     return ''
   }
 
   const minutes = Math.floor(total / 60)
-  if (minutes < 1) return '<1м'
-  if (minutes < 60) return `${minutes}м`
+  if (minutes < 1) return t('duration.lessThanMinute')
+  if (minutes < 60) return t('duration.minutes', minutes)
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}ч${String(minutes % 60).padStart(2, '0')}м`
-  return `${Math.floor(hours / 24)}д${hours % 24}ч`
+  if (hours < 24) return t('duration.hoursMinutes', hours, String(minutes % 60).padStart(2, '0'))
+  return t('duration.daysHours', Math.floor(hours / 24), hours % 24)
 }
 
 function pad(value) {
@@ -1058,13 +1150,14 @@ function formatSpan(startSeconds, endSeconds) {
 
 /** `m1 · p1 → m2 · p2`. Several routes is the honest reading of an aggregate
  *  that cannot order them; see the backend's `_segment`. */
-function routeLabel(segment) {
+function routeLabel(segment, t) {
   const names = list(segment?.routes)
     .map(route => [route.model, route.provider].filter(Boolean).join(' · '))
     .filter(Boolean)
-  return names.length ? names.join(' → ') : 'маршрут неизвестен'
+  return names.length ? names.join(' → ') : t('route.unknown')
 }
 
+/** Tool names are identifiers, not prose — never translated. */
 function toolsLabel(segment) {
   return list(segment?.topTools)
     .map(tool => (tool.name && num(tool.count) !== null ? `${tool.name}×${tool.count}` : ''))
@@ -1074,7 +1167,8 @@ function toolsLabel(segment) {
 
 // Exported for tests; the app only consumes the default export.
 export {
-  BLOCKS, formatDuration, formatSpan, list, markerRow, num, routeLabel, sparkline, toolsLabel
+  BLOCKS, formatDuration, formatSpan, list, LOCALES, markerRow, num, routeLabel,
+  sparkline, toolsLabel
 }
 ```
 
@@ -1094,6 +1188,11 @@ Expected: PASS. The suite exercises only the exported helpers, which now exist.
    Run. Expected: `marker-at-start` or `marker-at-end` fails. Revert.
 3. In `formatSpan`, always return the short tail (drop the `toDateString` comparison).
    Run. Expected: `cross-day-span` fails. Revert.
+4. In `LOCALES.ru`, delete the `route` key.
+   Run. Expected: `locales-have-same-keys` fails, naming `route.unknown` as missing in `ru`. Revert.
+5. In `formatDuration`, replace `t('duration.minutes', minutes)` with a hardcoded
+   `` `${minutes}m` ``. Run. Expected: `minutes-ru` fails — the Russian panel would
+   otherwise print an English unit. Revert.
 
 - [ ] **Step 6: Commit**
 
@@ -1127,6 +1226,8 @@ const renderChip = () => {
   plugin.register({
     register(value) { contribution = value },
     rest: async () => ({ segments: [] }),
+    // register() registers locale bundles and expects a disposer back.
+    i18n: { register: () => () => {}, t: key => key },
     onDispose() {}
   })
   const element = contribution.render()
@@ -1203,11 +1304,11 @@ function compactionLabel(usage) {
   return `🧳 ${Math.max(0, Math.trunc(Number(usage?.compressions) || 0))}`
 }
 
-function Segment({ segment }) {
+function Segment({ segment, t }) {
   const marks = markerRow(segment)
   const counts = [
-    `${num(segment.prompts) ?? 0} промптов`,
-    `${num(segment.toolCalls) ?? 0} вызовов инструментов`,
+    t('counts.prompts', num(segment.prompts) ?? 0),
+    t('counts.tools', num(segment.toolCalls) ?? 0),
     (Array.isArray(segment.compactions) ? segment.compactions.length : 0) > 0
       ? `🧳${segment.compactions.length}`
       : ''
@@ -1223,7 +1324,7 @@ function Segment({ segment }) {
           jsx('span', { className: 'cc-span', children: formatSpan(segment.start, segment.end) }),
           jsx('span', {
             className: 'cc-dur',
-            children: formatDuration((num(segment.end) ?? 0) - (num(segment.start) ?? 0))
+            children: formatDuration((num(segment.end) ?? 0) - (num(segment.start) ?? 0), t)
           })
         ]
       }),
@@ -1231,7 +1332,9 @@ function Segment({ segment }) {
       // The marker row is dropped entirely when nothing was compacted, rather
       // than rendering 20 blanks that push every segment a line taller.
       marks.trim() && jsx('div', { className: 'cc-marks', children: marks }),
-      jsx('div', { className: 'cc-route', title: routeLabel(segment), children: routeLabel(segment) }),
+      jsx('div', {
+        className: 'cc-route', title: routeLabel(segment, t), children: routeLabel(segment, t)
+      }),
       jsx('div', { className: 'cc-counts', children: counts }),
       tools && jsx('div', { className: 'cc-tools', title: tools, children: tools })
     ]
@@ -1239,6 +1342,7 @@ function Segment({ segment }) {
 }
 
 function Panel({ sessionId, profile }) {
+  const t = usePluginI18n(ID)
   const { data, error } = useQuery({
     queryKey: [ID, 'timeline', sessionId, profile],
     queryFn: () => rest(`/timeline?session=${encodeURIComponent(sessionId)}`
@@ -1256,33 +1360,36 @@ function Panel({ sessionId, profile }) {
       jsxs('div', {
         className: 'cc-head',
         children: [
-          jsx('span', { className: 'cc-title', children: 'Хронология сессии' }),
-          jsx('span', { className: 'cc-sub', children: segments.length ? `${segments.length} отрезков` : '' })
+          jsx('span', { className: 'cc-title', children: t('title') }),
+          jsx('span', {
+            className: 'cc-sub',
+            children: segments.length ? t('segments', segments.length) : ''
+          })
         ]
       }),
-      !sessionId && jsx('div', { className: 'cc-sub', children: 'Сессия ещё не начата.' }),
+      !sessionId && jsx('div', { className: 'cc-sub', children: t('noSession') }),
       error && jsx('div', {
         className: 'cc-error',
-        children: 'Бэкенд недоступен — добавьте "comp-count" в plugins.enabled '
-          + `и перезапустите шлюз. (${String(error.message ?? error)})`
+        children: t('backendDown', String(error.message ?? error))
       }),
       sessionId && !error && segments.length === 0 && jsx('div', {
         className: 'cc-sub',
-        children: 'В этой сессии ещё нет рабочих отрезков.'
+        children: t('noSegments')
       }),
-      ...segments.map((segment, index) => jsx(Segment, { segment }, `${segment.start}-${index}`))
+      ...segments.map((segment, index) => jsx(Segment, { segment, t }, `${segment.start}-${index}`))
     ]
   })
 }
 
 function Chip() {
+  const t = usePluginI18n(ID)
   const usage = useValue(host.state.focusedUsage)
   // The STORED id, never focusedSessionId: runtime ids do not survive a reload
   // and do not key state.db, which is what the backend reads.
   const sessionId = useValue(host.state.focusedStoredSessionId) || ''
   const profile = useValue(host.state.focusedSessionProfile) || 'default'
   const label = compactionLabel(usage)
-  const title = `Компакций в этой сессии: ${label.replace('🧳 ', '')}`
+  const title = t('chipTitle', label.replace('🧳 ', ''))
 
   return jsxs(Popover, {
     children: [
@@ -1300,7 +1407,7 @@ function Chip() {
         side: 'top',
         align: 'end',
         className: 'cc-popover',
-        'aria-label': 'Хронология сессии',
+        'aria-label': t('title'),
         children: jsx(Panel, { sessionId, profile })
       })
     ]
@@ -1314,6 +1421,11 @@ export default {
   compactionLabel,
   register(ctx) {
     rest = path => ctx.rest(path)
+
+    // Locale bundles land under this plugin's id, scoped like ctx.storage —
+    // core's en.ts is never touched. The disposer drops them on unload, so a
+    // hot reload cannot stack duplicate registrations.
+    ctx.onDispose(ctx.i18n.register(LOCALES))
 
     // Idempotent: a hot reload can call register again on a module instance
     // whose previous style element is still in the document.
@@ -1343,8 +1455,8 @@ Also extend the export line from Task 3 to include the new helper:
 
 ```javascript
 export {
-  BLOCKS, compactionLabel, formatDuration, formatSpan, list, markerRow, num,
-  routeLabel, sparkline, toolsLabel
+  BLOCKS, compactionLabel, formatDuration, formatSpan, list, LOCALES, markerRow,
+  num, routeLabel, sparkline, toolsLabel
 }
 ```
 
@@ -1591,12 +1703,23 @@ Expected: the package exists under `plugins/`. Under `desktop-plugins/` there is
 - [ ] **Step 4: Open the popover on a real session**
 
 Open the desktop, focus a long-running chat, click the 🧳 chip. Check by eye:
+- the panel's copy is in the language the app is set to, with no stray English
+  (or Russian) sentence and no raw key like `counts.prompts` showing through;
 - segments are listed newest-last with plausible times;
 - the sparkline is 20 glyphs wide and its `▲` markers sit under blocks, not offset;
 - the route line names a model and provider you recognise for that session;
 - counts and tools look sane for the work you remember doing.
 
-- [ ] **Step 5: Cross-check one segment against the database**
+- [ ] **Step 5: Switch the app language and re-open the panel**
+
+In Settings, change the interface language (Russian ↔ English), then open the
+popover again. Every string must follow — the plugin reads the app's
+`display.language` and owns no language of its own. A string that stays put is a
+hardcoded literal that escaped the bundles; find and move it into `LOCALES`.
+
+Restore the language you normally use before moving on.
+
+- [ ] **Step 6: Cross-check one segment against the database**
 
 Take the first segment's start time from the panel and confirm the store agrees:
 
@@ -1610,7 +1733,7 @@ sqlite3 ~/.hermes/state.db "
 
 The panel's first segment must start at the first real operator prompt, not earlier.
 
-- [ ] **Step 6: Check the failure path**
+- [ ] **Step 7: Check the failure path**
 
 Temporarily disable the backend gate and confirm the panel degrades honestly rather than going blank or crashing the status bar:
 
@@ -1618,13 +1741,13 @@ Temporarily disable the backend gate and confirm the panel degrades honestly rat
 hermes plugins disable comp-count && hermes gateway restart
 ```
 
-Expected: the chip still shows `🧳 N`; the popover shows the "бэкенд недоступен" line. Then restore:
+Expected: the chip still shows `🧳 N`; the popover shows the `backendDown` line in the app's language. Then restore:
 
 ```bash
 hermes plugins enable --no-allow-tool-override comp-count && hermes gateway restart
 ```
 
-- [ ] **Step 7: Report**
+- [ ] **Step 8: Report**
 
 State what was verified and anything that did not match. If a defect appears, fix it in the owning task's file, re-run `bun run check`, and re-verify — do not paper over it in the renderer.
 
@@ -1632,8 +1755,8 @@ State what was verified and anything that did not match. If a defect appears, fi
 
 ## Self-Review
 
-**Spec coverage.** Every spec section maps to a task: the backend package and read-only store access, prompt rule, `active OR compacted` read, clustering rule, promptless-cluster drop, route `task=''` filter and the accepted aggregate-ordering limit → Task 1, proven against real data in Task 2. Sparkline, marker placement, the non-empty-bucket floor, duration/span formatting, defensive guards, theme variables, the ~360px panel and monospace alignment → Tasks 3–4. Chip non-regression → Task 4, Step 1. Failure and empty states (backend absent, no session, no segments, route unknown) → Task 4, Step 3 and Task 6, Step 6. The excluded items (cost, context growth, day ribbon) appear nowhere, which is correct. Installer, gate, stale-copy removal, `check.mjs`, README → Task 5.
+**Spec coverage.** Every spec section maps to a task: the backend package and read-only store access, prompt rule, `active OR compacted` read, clustering rule, promptless-cluster drop, route `task=''` filter and the accepted aggregate-ordering limit → Task 1, proven against real data in Task 2. Sparkline, marker placement, the non-empty-bucket floor, duration/span formatting, localized copy through `ctx.i18n.register` + `usePluginI18n`, defensive guards, theme variables, the ~360px panel and monospace alignment → Tasks 3–4. Chip non-regression → Task 4, Step 1. Failure and empty states (backend absent, no session, no segments, route unknown) → Task 4, Step 3 and Task 6, Step 7; the language actually following the app is verified live in Task 6, Step 5. The excluded items (cost, context growth, day ribbon) appear nowhere, which is correct. Installer, gate, stale-copy removal, `check.mjs`, README → Task 5.
 
 **Placeholders.** None: every code step carries the actual content, every test step names the command and the expected result, and the mutation steps say which check must fail.
 
-**Type consistency.** The segment shape declared in Task 1's Produces block (`start`, `end`, `prompts`, `toolCalls`, `compactions`, `routes`, `topTools`, `buckets`, `peak`) is the shape the Task 3 helpers read and the Task 4 components render; `SPARK_BUCKETS = 20` is one value in both halves; `compactionLabel` is defined in Task 4 and exported there, and the Task 4 probe imports it from the default export where it is attached.
+**Type consistency.** The segment shape declared in Task 1's Produces block (`start`, `end`, `prompts`, `toolCalls`, `compactions`, `routes`, `topTools`, `buckets`, `peak`) is the shape the Task 3 helpers read and the Task 4 components render; `SPARK_BUCKETS = 20` is one value in both halves; `compactionLabel` is defined in Task 4 and exported there, and the Task 4 probe imports it from the default export where it is attached. `LOCALES` is declared in Task 3's Produces block, exported in the same step, registered in Task 4's `register`, and read by the Task 3 probe's `translator` helper — the same object in all four places. Helpers that emit words (`formatDuration`, `routeLabel`) take `t` in their signature everywhere they are declared, called, and tested; those that emit only digits or identifiers (`formatSpan`, `toolsLabel`, `sparkline`, `markerRow`) never do.
