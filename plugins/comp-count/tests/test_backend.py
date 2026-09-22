@@ -151,6 +151,27 @@ out = store(leading_machinery)
 check("segment-starts-at-prompt", out["segments"][0]["start"] == T0 + 600,
       str(out["segments"][0]["start"]))
 
+
+# ...but a COMPACTION in that machine-only head anchors the segment too. Found
+# on the live store: four of 17 compactions fell before the cluster's first
+# prompt and vanished from the timeline entirely.
+def compaction_before_first_prompt(conn, sid):
+    fx.msg(conn, sid, T0, "assistant")
+    fx.msg(conn, sid, T0 + 300, "assistant", content="[PRIOR CONTEXT]",
+           summary=1, active=0, compacted=1)
+    fx.msg(conn, sid, T0 + 900, "user")
+    fx.route(conn, sid, "m1", "p1", T0, T0 + 1200)
+
+
+out = store(compaction_before_first_prompt)
+check("early-compaction-kept", len(out["segments"][0]["compactions"]) == 1,
+      str(out["segments"][0]["compactions"]))
+check("early-compaction-anchors-start", out["segments"][0]["start"] == T0 + 300,
+      str(out["segments"][0]["start"]))
+# The machine-only head BEFORE that compaction is still trimmed.
+check("head-before-anchor-trimmed", out["segments"][0]["start"] > T0,
+      str(out["segments"][0]["start"]))
+
 # --- routes -----------------------------------------------------------------
 
 

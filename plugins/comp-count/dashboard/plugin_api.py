@@ -173,12 +173,17 @@ def build_timeline(db_path: str, session_id: str) -> Dict[str, Any]:
 
     segments = []
     for cluster in _cluster(events):
-        prompts = [e["ts"] for e in cluster["events"] if e["prompt"]]
         # No operator prompt means this stretch was machinery — a resume, a
         # background review. The operator was not at the keyboard.
-        if not prompts:
+        if not any(e["prompt"] for e in cluster["events"]):
             continue
-        cluster["start"] = min(prompts)
+        # Trim the machine-only head so a segment reads "started when I started
+        # working", not when a background turn happened to wake up. A COMPACTION
+        # anchors the segment too: on a real session four compactions fell in
+        # that head, and anchoring on prompts alone dropped them off the
+        # timeline entirely — the one thing the panel exists to show.
+        anchors = [e["ts"] for e in cluster["events"] if e["prompt"] or e["compaction"]]
+        cluster["start"] = min(anchors)
         cluster["events"] = [e for e in cluster["events"] if e["ts"] >= cluster["start"]]
         segments.append(_segment(cluster, routes))
 
