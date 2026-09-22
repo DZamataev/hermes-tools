@@ -7,6 +7,7 @@ test:
 	/bin/zsh tests/test_repository_layout.sh
 	/bin/sh tests/test-restore-teamclaude.sh
 	node --test desktop-plugins/comp-count/plugin.test.mjs
+	/bin/bash plugins/provider-limits/tests/run.sh
 	/bin/zsh runner/tests/test_launchd.sh
 	/bin/zsh runner/tests/test_webui_app.sh
 	/bin/zsh runner/tests/test_app_bundle.sh

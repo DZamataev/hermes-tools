@@ -1,0 +1,44 @@
+{
+  "request_count": 42818,
+  "total_tokens": 4399633032,
+  "cached_input_tokens": 4073675136,
+  "total_cost_usd": 3897.165188,
+  "limits": [
+    {
+      "limit_type": "cost_usd",
+      "limit_window": "weekly",
+      "max_value": 2010000000,
+      "current_value": 1097007,
+      "remaining_value": 2008902993,
+      "model_filter": null,
+      "reset_at": "2026-09-25T12:45:35.092289Z",
+      "source": "api_key_limit"
+    }
+  ],
+  "upstream_limits": [
+    {
+      "limit_type": "credits",
+      "limit_window": "5h",
+      "max_value": 225,
+      "current_value": 124,
+      "remaining_value": 101,
+      "model_filter": null,
+      "reset_at": "2026-09-21T13:18:19Z",
+      "source": "aggregate"
+    },
+    {
+      "limit_type": "credits",
+      "limit_window": "7d",
+      "max_value": 57960,
+      "current_value": 17136,
+      "remaining_value": 40824,
+      "model_filter": null,
+      "reset_at": "2026-09-25T11:02:06Z",
+      "source": "aggregate"
+    }
+  ],
+  "account_pool_usage": {
+    "primary": 92.82608695652173,
+    "secondary": 70.43478260869566
+  }
+}

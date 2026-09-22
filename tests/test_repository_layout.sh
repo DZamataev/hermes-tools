@@ -14,6 +14,12 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
   fail "Hermes WebUI LaunchAgent template is missing"
 [[ -f "$ROOT/desktop-plugins/comp-count/plugin.js" ]] ||
   fail "comp-count desktop plugin is missing"
+[[ -f "$ROOT/plugins/provider-limits/desktop/plugin.js" ]] ||
+  fail "provider-limits desktop half is missing"
+[[ -f "$ROOT/plugins/provider-limits/dashboard/plugin_api.py" ]] ||
+  fail "provider-limits backend half is missing"
+[[ -x "$ROOT/plugins/provider-limits/tests/run.sh" ]] ||
+  fail "provider-limits test bench is missing or not executable"
 
 for obsolete in \
   "$ROOT/open-webui" \

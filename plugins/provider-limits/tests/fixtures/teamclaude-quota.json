@@ -1,0 +1,163 @@
+{
+  "accounts": [
+    {
+      "name": "account1@example.com (Looky)",
+      "type": "oauth",
+      "disabled": false,
+      "status": "active",
+      "tier": {
+        "rateLimitTier": "default_raven",
+        "seatTier": "team_standard",
+        "weight": 1
+      },
+      "buckets": {
+        "fiveHour": {
+          "utilization": 0.58,
+          "remaining": 0.42,
+          "resetAt": 1790001000687,
+          "source": "unified5h"
+        },
+        "weeklyShared": {
+          "utilization": 0.96,
+          "remaining": 0.04,
+          "resetAt": 1790233200687,
+          "source": "unified7d"
+        },
+        "weeklySonnet": {
+          "utilization": 0.96,
+          "remaining": 0.04,
+          "resetAt": 1790233200687,
+          "source": "unified7d"
+        },
+        "weeklyFable": {
+          "utilization": 0.96,
+          "remaining": 0.04,
+          "resetAt": 1790233200687,
+          "source": "unified7d"
+        }
+      }
+    },
+    {
+      "name": "account2@example.com (account2@example.com's Organization)",
+      "type": "oauth",
+      "disabled": true,
+      "status": "active",
+      "tier": {
+        "rateLimitTier": "default_claude_ai",
+        "seatTier": null,
+        "weight": 1
+      },
+      "buckets": {
+        "fiveHour": null,
+        "weeklyShared": {
+          "utilization": 0.29,
+          "remaining": 0.71,
+          "resetAt": 1790046000972,
+          "source": "unified7d"
+        },
+        "weeklySonnet": {
+          "utilization": 0.29,
+          "remaining": 0.71,
+          "resetAt": 1790046000972,
+          "source": "unified7d"
+        },
+        "weeklyFable": {
+          "utilization": 0.3,
+          "remaining": 0.7,
+          "resetAt": 1790045999972,
+          "source": "unified7dFable"
+        }
+      }
+    },
+    {
+      "name": "account3@example.com",
+      "type": "oauth",
+      "disabled": false,
+      "status": "active",
+      "tier": {
+        "rateLimitTier": "default_claude_max_20x",
+        "seatTier": null,
+        "weight": 20
+      },
+      "buckets": {
+        "fiveHour": {
+          "utilization": 0.19,
+          "remaining": 0.81,
+          "resetAt": 1790001000000,
+          "source": "unified5h"
+        },
+        "weeklyShared": {
+          "utilization": 0.59,
+          "remaining": 0.41,
+          "resetAt": 1790038800000,
+          "source": "unified7d"
+        },
+        "weeklySonnet": {
+          "utilization": 0.59,
+          "remaining": 0.41,
+          "resetAt": 1790038800000,
+          "source": "unified7d"
+        },
+        "weeklyFable": {
+          "utilization": 0.3,
+          "remaining": 0.7,
+          "resetAt": 1790038799546,
+          "source": "unified7dFable"
+        }
+      }
+    }
+  ],
+  "aggregate": {
+    "fiveHour": {
+      "capacityWeight": 21,
+      "usedWeight": 4.38,
+      "remainingWeight": 16.62,
+      "utilization": 0.208571428571,
+      "remaining": 0.791428571429,
+      "knownAccounts": 2,
+      "nextResetAt": 1790001000000
+    },
+    "weeklyShared": {
+      "capacityWeight": 22,
+      "usedWeight": 13.05,
+      "remainingWeight": 8.95,
+      "utilization": 0.593181818182,
+      "remaining": 0.406818181818,
+      "knownAccounts": 3,
+      "nextResetAt": 1790038800000
+    },
+    "weeklySonnet": {
+      "capacityWeight": 22,
+      "usedWeight": 13.05,
+      "remainingWeight": 8.95,
+      "utilization": 0.593181818182,
+      "remaining": 0.406818181818,
+      "knownAccounts": 3,
+      "nextResetAt": 1790038800000
+    },
+    "weeklyFable": {
+      "capacityWeight": 22,
+      "usedWeight": 7.26,
+      "remainingWeight": 14.74,
+      "utilization": 0.33,
+      "remaining": 0.67,
+      "knownAccounts": 3,
+      "nextResetAt": 1790038799546
+    }
+  },
+  "unknownTiers": [],
+  "warmup": {
+    "enabled": true,
+    "mode": "rolling",
+    "timezone": "Europe/Moscow",
+    "resetTime": "15:30",
+    "anchorResetAt": "2026-09-04T12:30:00.000Z",
+    "cadenceSeconds": 18000,
+    "windowSeconds": 18000,
+    "nearResetToleranceSeconds": 120,
+    "postResetBufferSeconds": 10,
+    "nextWarmupAt": "2026-09-21T14:30:00.000Z",
+    "nextTargetResetAt": "2026-09-21T19:30:00.000Z",
+    "missedRunPolicy": "skip"
+  }
+}

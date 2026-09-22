@@ -1,0 +1,54 @@
+{
+  "request_count": 30260,
+  "total_tokens": 3150580333,
+  "cached_input_tokens": 2962931968,
+  "total_cost_usd": 1961.263385,
+  "limits": [
+    {
+      "limit_type": "credits",
+      "limit_window": "5h",
+      "max_value": 450,
+      "current_value": 7,
+      "remaining_value": 443,
+      "model_filter": null,
+      "reset_at": "2026-09-21T12:00:12Z",
+      "source": "aggregate"
+    },
+    {
+      "limit_type": "credits",
+      "limit_window": "7d",
+      "max_value": 15120,
+      "current_value": 680,
+      "remaining_value": 14440,
+      "model_filter": null,
+      "reset_at": "2026-09-26T16:05:09Z",
+      "source": "aggregate"
+    }
+  ],
+  "upstream_limits": [
+    {
+      "limit_type": "credits",
+      "limit_window": "5h",
+      "max_value": 450,
+      "current_value": 7,
+      "remaining_value": 443,
+      "model_filter": null,
+      "reset_at": "2026-09-21T12:00:12Z",
+      "source": "aggregate"
+    },
+    {
+      "limit_type": "credits",
+      "limit_window": "7d",
+      "max_value": 15120,
+      "current_value": 680,
+      "remaining_value": 14440,
+      "model_filter": null,
+      "reset_at": "2026-09-26T16:05:09Z",
+      "source": "aggregate"
+    }
+  ],
+  "account_pool_usage": {
+    "primary": 98.5,
+    "secondary": 95.5
+  }
+}

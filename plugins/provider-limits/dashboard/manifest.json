@@ -1,0 +1,9 @@
+{
+  "name": "provider-limits",
+  "label": "Provider limits",
+  "description": "Remaining quota for custom providers (TeamClaude, Codex LB)",
+  "icon": "Gauge",
+  "version": "0.1.0",
+  "tab": { "path": "/provider-limits", "hidden": true },
+  "api": "plugin_api.py"
+}

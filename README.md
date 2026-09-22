@@ -10,6 +10,8 @@ plugins installed.
 - `runner/` — native Dock application and LaunchAgent lifecycle tools.
 - `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin;
   `restore-teamclaude.sh` keeps its installed copy under `~/.hermes` current.
+- `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
+  showing each custom provider's 5-hour quota in the status bar.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
@@ -19,6 +21,33 @@ plugins installed.
 make bootstrap
 make test
 ```
+
+## Provider limits plugin
+
+`plugins/provider-limits/` is the source of truth for the status-bar quota chip.
+Unlike `comp-count` it has two halves and installs into `~/.hermes/plugins/`, so
+`restore-teamclaude.sh` does not manage it:
+
+```bash
+cp -R plugins/provider-limits ~/.hermes/plugins/
+hermes plugins enable provider-limits   # then restart the gateway
+# Capabilities → Plugins → enable the desktop half
+```
+
+Both halves default to OFF — that is the plugin security boundary
+(GHSA-mcfc-hp25-cjv7), not an oversight. Backend routes mount at gateway startup
+only, so enabling without a restart leaves the chip showing `—`.
+
+Its own bench runs offline and needs no API keys; the live-upstream pass is
+opt-in because an upstream outage is not this code breaking:
+
+```bash
+plugins/provider-limits/tests/run.sh          # 53 checks, offline
+plugins/provider-limits/tests/run.sh --e2e    # plus real route and upstreams
+```
+
+`make test` runs the offline pass. See the plugin's own README for what it draws
+and why.
 
 ## Dock application
 

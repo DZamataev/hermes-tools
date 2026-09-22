@@ -1,0 +1,5 @@
+name: provider-limits
+version: 0.1.0
+description: "Remaining quota for custom LLM providers (TeamClaude, Codex LB) in the desktop status bar."
+author: "Denis"
+kind: standalone
