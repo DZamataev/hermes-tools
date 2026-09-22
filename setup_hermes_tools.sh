@@ -48,9 +48,18 @@ fi
 # replace it wholesale: copying file-by-file would leave a file deleted upstream
 # behind in the installed copy, and a stale plugin_api.py still gets imported.
 provider_limits_changed=false
+provider_limits_backend_changed=false
 if ! diff -r -q \
   -x '.git' -x '__pycache__' -x '*.pyc' \
   "$provider_limits_source" "$provider_limits_target" >/dev/null 2>&1; then
+  # Only the BACKEND half needs a gateway restart. A desktop-only edit (CSS, the
+  # chip) reaches the screen through Electron's reconcile, and restarting for it
+  # would end the user's live sessions for nothing.
+  if ! diff -r -q \
+    -x '__pycache__' -x '*.pyc' \
+    "$provider_limits_source/dashboard" "$provider_limits_target/dashboard" >/dev/null 2>&1; then
+    provider_limits_backend_changed=true
+  fi
   install -d -m 0755 "$hermes_home/plugins"
   rm -rf "$provider_limits_target.tmp"
   cp -R "$provider_limits_source" "$provider_limits_target.tmp"
@@ -86,10 +95,32 @@ if test "$provider_limits_gate_changed" = true; then
   installed="${installed:+$installed, }provider-limits backend gate"
 fi
 
-# Backend routes mount at gateway startup only, so new or updated backend source
-# needs a restart. comp-count is desktop-only: the renderer reloads it by itself,
-# and restarting for it would end live sessions for nothing.
-if test "$provider_limits_changed" = true || test "$provider_limits_gate_changed" = true; then
+# The desktop half the RENDERER loads is a third copy: Electron materializes
+# `plugins/<name>/desktop/` into `desktop-plugins/<name>/` with a
+# `.hermes-package.json` marker. Updating the package alone leaves that copy
+# stale, so a CSS fix can be installed and still not reach the screen.
+#
+# Only Electron may write it — the marker records the source mtime it copied,
+# and a shell script forging that would drift the moment the format changes.
+# Instead nudge the watcher the app already keeps on the root directory: a
+# directory appearing and vanishing makes it re-resolve the root, which runs
+# the reconcile. With the app closed this is a no-op and the reconcile happens
+# at next launch anyway.
+desktop_root="$hermes_home/desktop-plugins"
+if test "$provider_limits_changed" = true && test -d "$desktop_root"; then
+  nudge="$desktop_root/.setup-hermes-tools-nudge"
+  rm -rf "$nudge"
+  if mkdir "$nudge" 2>/dev/null; then
+    sleep 1
+    rmdir "$nudge" 2>/dev/null || true
+  fi
+fi
+
+# Backend routes mount at gateway startup only, so new or updated BACKEND source
+# needs a restart — as does a newly set gate. A desktop-only change does not:
+# the renderer picks it up through the reconcile nudged above, and restarting
+# would end live sessions for nothing.
+if test "$provider_limits_backend_changed" = true || test "$provider_limits_gate_changed" = true; then
   "$hermes_bin" gateway restart
   printf 'Installed: %s; Hermes gateway restarted.\n' "$installed"
   if test "$provider_limits_gate_changed" = true; then

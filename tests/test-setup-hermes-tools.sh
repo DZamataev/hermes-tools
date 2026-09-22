@@ -123,23 +123,88 @@ if grep -qx 'gateway restart' "$test_dir/log"; then
   fail 'restarts the gateway when only comp-count changed'
 fi
 
+# --- a desktop-only change must NOT restart the gateway ---------------------
+
+# The renderer picks up a desktop edit through Electron's reconcile, so a CSS
+# fix must not end the user's live sessions. This was a real defect: every
+# desktop-only edit restarted the gateway.
+: >"$test_dir/log"
+printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
+run_script >/dev/null
+cmp -s "$root_dir/plugins/provider-limits/desktop/plugin.js" \
+  "$test_dir/home/plugins/provider-limits/desktop/plugin.js" ||
+  fail 'restores an outdated provider-limits desktop half'
+if grep -qx 'gateway restart' "$test_dir/log"; then
+  fail 'restarts the gateway for a desktop-only change'
+fi
+
 # --- updated backend source must restart ------------------------------------
 
 # A file deleted upstream must disappear from the installed copy: a stale
-# plugin_api.py is still imported by the gateway, and a stale desktop half is
-# still loaded by the renderer.
+# plugin_api.py is still imported by the gateway.
 : >"$test_dir/log"
 printf 'stale\n' >"$test_dir/home/plugins/provider-limits/leftover.py"
-printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
+printf 'stale\n' >>"$test_dir/home/plugins/provider-limits/dashboard/plugin_api.py"
 run_script >/dev/null
 if test -e "$test_dir/home/plugins/provider-limits/leftover.py"; then
   fail 'leaves a file that no longer exists in the repository copy'
 fi
-cmp -s "$root_dir/plugins/provider-limits/desktop/plugin.js" \
-  "$test_dir/home/plugins/provider-limits/desktop/plugin.js" ||
-  fail 'restores an outdated provider-limits installation'
+cmp -s "$root_dir/plugins/provider-limits/dashboard/plugin_api.py" \
+  "$test_dir/home/plugins/provider-limits/dashboard/plugin_api.py" ||
+  fail 'restores an outdated provider-limits backend'
 grep -qx 'gateway restart' "$test_dir/log" ||
   fail 'does not restart after updating the provider-limits backend'
+
+# --- the renderer's copy gets nudged, and nothing is left behind ------------
+
+# Electron materializes plugins/<name>/desktop/ into desktop-plugins/<name>/;
+# updating the package alone leaves that copy stale, so a CSS fix can be
+# installed and still never reach the screen. The script cannot write that copy
+# (only Electron may), so it touches the root the app watches.
+#
+# The nudge is observed the way the app observes it: a real fswatch on the root.
+: >"$test_dir/log"
+printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
+before_inode=$(stat -f '%i %m' "$test_dir/home/desktop-plugins" 2>/dev/null || echo none)
+: >"$test_dir/fswatch"
+if command -v fswatch >/dev/null 2>&1; then
+  fswatch -1 --event Created --event Removed "$test_dir/home/desktop-plugins" \
+    >"$test_dir/fswatch" 2>/dev/null &
+  watcher_pid=$!
+  sleep 0.3
+else
+  watcher_pid=''
+fi
+run_script >/dev/null
+if test -n "$watcher_pid"; then
+  sleep 0.5
+  kill "$watcher_pid" 2>/dev/null || true
+  wait "$watcher_pid" 2>/dev/null || true
+  grep -q . "$test_dir/fswatch" ||
+    fail 'never touched desktop-plugins, so the renderer keeps a stale copy'
+else
+  # No fswatch: fall back to the directory mtime, which a create+remove bumps.
+  after_inode=$(stat -f '%i %m' "$test_dir/home/desktop-plugins" 2>/dev/null || echo none)
+  test "$before_inode" != "$after_inode" ||
+    fail 'never touched desktop-plugins, so the renderer keeps a stale copy'
+fi
+if ls -a "$test_dir/home/desktop-plugins" | grep -q nudge; then
+  fail 'leaves its reconcile nudge behind in desktop-plugins'
+fi
+
+# With no desktop-plugins root the nudge must not invent one. comp-count's own
+# install legitimately recreates the root, so the assertion is specifically that
+# no nudge directory is left or created there.
+rm -rf "$test_dir/home/desktop-plugins"
+printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
+run_script >/dev/null
+if ls -a "$test_dir/home/desktop-plugins" 2>/dev/null | grep -q nudge; then
+  fail 'left a nudge directory behind in a freshly created root'
+fi
+
+# Restore the root for the checks that follow.
+mkdir -p "$test_dir/home/desktop-plugins/comp-count"
+printf 'stale plugin\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
 
 # --- a gate the user turned off is set again --------------------------------
 

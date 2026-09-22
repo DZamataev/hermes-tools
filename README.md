@@ -41,8 +41,13 @@ bun run setup              # or ./setup_hermes_tools.sh without bun
 
 Installs `comp-count` and `provider-limits` under `~/.hermes` and sets the
 `provider-limits` backend gate. Idempotent, and restarts the Hermes gateway only
-when the backend actually changed — an update to `comp-count` alone does not,
-since the renderer reloads it by itself and a restart would end live sessions.
+when the **backend** actually changed — a desktop-only edit does not, since the
+renderer picks it up without one and a restart would end live sessions.
+
+The desktop half the renderer loads is a third copy: Electron materializes
+`plugins/<name>/desktop/` into `desktop-plugins/<name>/`. Only Electron may
+write it, so the script nudges the directory the app watches, and the reconcile
+runs itself. With the app closed that is a no-op — it reconciles at next launch.
 
 It installs plugins and nothing else. Patching Hermes source lived here once;
 the TeamClaude OAuth proxy now ships in the Hermes fork, so the patch and the

@@ -35,8 +35,9 @@ const docs = {
     summary: 'Install both plugins into ~/.hermes and enable the backend.',
     detail: [
       'Installs comp-count and provider-limits, sets the provider-limits',
-      'backend gate, and restarts the Hermes gateway only when the backend',
-      'actually changed. Safe to re-run: unchanged plugins mean no restart.',
+      'backend gate, and restarts the Hermes gateway only when the BACKEND',
+      'changed — a desktop-only edit reaches the renderer without one.',
+      'Safe to re-run: unchanged plugins mean no restart.',
       'It installs plugins and nothing else — provider and model settings are',
       'yours. The desktop half still needs one manual toggle in',
       'Capabilities → Plugins; the loader forces a package half off.',
