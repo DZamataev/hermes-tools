@@ -201,6 +201,30 @@ check('only-confirmed-outage-counts',
   downServices([UP, DOWN, UNKNOWN]).length === 1 && downServices([UP, UNKNOWN]).length === 0)
 check('banner-lists-incidents',
   collectText(ServicesBanner({ services: [UP, DOWN] })).includes('Elevated errors on Codex API'))
+// An incident name must NOT reuse the note class beside the service dot: that
+// one is a short aside next to a coloured dot, and it clipped a real 425px
+// ChatGPT incident down to 190px — hiding exactly why the service was degraded.
+const bannerClasses = node => {
+  const found = []
+  ;(function walk(n) {
+    if (Array.isArray(n)) { n.forEach(walk); return }
+    if (!n || typeof n !== 'object') return
+    if (n.p?.className) found.push(n.p.className)
+    walk(n.p?.children)
+  })(node)
+  return found
+}
+check('incident-uses-its-own-full-width-class',
+  bannerClasses(ServicesBanner({ services: [UP, DOWN] })).includes('pl-incident'),
+  JSON.stringify(bannerClasses(ServicesBanner({ services: [UP, DOWN] }))))
+// The CSS behind both classes must let text wrap rather than cut it off.
+const css = (await import('node:fs')).readFileSync(
+  new URL('./plugin.js', import.meta.url), 'utf8')
+const rule = name => (css.match(new RegExp(`\\.${name}\\{([^}]*)\\}`)) ?? [, ''])[1]
+check('incident-css-wraps', /flex-basis:100%/.test(rule('pl-incident')) &&
+  !/white-space:nowrap/.test(rule('pl-incident')), rule('pl-incident'))
+check('service-note-css-wraps', !/white-space:nowrap/.test(rule('pl-service-note')) &&
+  !/max-width/.test(rule('pl-service-note')), rule('pl-service-note'))
 check('banner-empty-is-null',
   ServicesBanner({ services: [] }) === null && ServicesBanner({ services: undefined }) === null)
 

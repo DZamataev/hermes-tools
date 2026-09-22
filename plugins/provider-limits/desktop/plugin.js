@@ -50,7 +50,8 @@ const CSS = `
 .pl-service[data-state=down] .pl-service-dot{background:var(--dt-destructive,var(--ui-accent))}
 .pl-service[data-state=unknown] .pl-service-dot{background:var(--ui-text-quaternary)}
 .pl-service[data-state=down]{color:var(--dt-destructive,var(--ui-text-secondary))}
-.pl-service-note{color:var(--ui-text-quaternary);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:190px}
+.pl-service-note{color:var(--ui-text-quaternary);white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+.pl-incident{flex-basis:100%;color:var(--ui-text-quaternary);line-height:1.35;overflow-wrap:anywhere}
 .pl-explain{font-size:.62rem;line-height:1.4;color:var(--ui-text-quaternary);padding-top:6px;border-top:1px solid var(--ui-stroke-quaternary)}
 .pl-provider{display:flex;flex-direction:column;gap:4px}
 .pl-provider-name{display:flex;align-items:baseline;justify-content:space-between;gap:6px;font-size:.6875rem;font-weight:600;color:var(--ui-text-secondary)}
@@ -271,7 +272,9 @@ function ServicesBanner({ services }) {
   }
 
   // An incident name is the single most useful string on the whole panel when
-  // something is broken, so it gets its own line rather than a tooltip.
+  // something is broken, so it gets its own full-width line — NOT the clipped
+  // one-line treatment used for the short note beside a service dot, which cut
+  // a 425px incident name down to 190px and hid why the service was degraded.
   const incidents = rows.flatMap(s => (Array.isArray(s.incidents) ? s.incidents : [])
     .map(name => `${s.label}: ${name}`))
 
@@ -279,7 +282,7 @@ function ServicesBanner({ services }) {
     className: 'pl-services',
     children: [
       ...rows.map((service, index) => jsx(ServiceRow, { service }, service.id ?? index)),
-      ...incidents.map((text, index) => jsx('span', { className: 'pl-service-note', children: text }, `inc-${index}`))
+      ...incidents.map((text, index) => jsx('span', { className: 'pl-incident', children: text }, `inc-${index}`))
     ]
   })
 }
