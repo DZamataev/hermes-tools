@@ -11,8 +11,7 @@ plugins installed.
 - `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
-- `setup_hermes_tools.sh` — installs both plugins under `~/.hermes`, keeps the
-  TeamClaude provider settings and OAuth proxy patch in place.
+- `setup_hermes_tools.sh` — installs both plugins under `~/.hermes`.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
@@ -29,12 +28,15 @@ make test
 ./setup_hermes_tools.sh
 ```
 
-Idempotent, and restarts the Hermes gateway only when something actually
-changed. It installs `comp-count` and `provider-limits` under `~/.hermes`,
-enables the `provider-limits` backend gate, verifies the TeamClaude provider
-settings, and applies the OAuth proxy patch to the Hermes checkout. When that
-patch no longer applies after a Hermes update it stops with rebase instructions
-rather than writing conflict markers into runnable source.
+Installs `comp-count` and `provider-limits` under `~/.hermes` and sets the
+`provider-limits` backend gate. Idempotent, and restarts the Hermes gateway only
+when the backend actually changed — an update to `comp-count` alone does not,
+since the renderer reloads it by itself and a restart would end live sessions.
+
+It installs plugins and nothing else. Patching Hermes source lived here once;
+the TeamClaude OAuth proxy now ships in the Hermes fork, so the patch and the
+provider-settings repair were removed — those settings had drifted from the
+working configuration, and "repairing" them would have broken a live install.
 
 The script cannot enable the `provider-limits` **desktop** half: the loader
 forces a materialized package off whatever the plugin declares, so flip it on

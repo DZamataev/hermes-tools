@@ -12,6 +12,8 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
   fail "restore-teamclaude.sh was renamed to setup_hermes_tools.sh"
 [[ ! -e "$ROOT/tests/test-restore-teamclaude.sh" ]] ||
   fail "test-restore-teamclaude.sh was renamed to test-setup-hermes-tools.sh"
+[[ ! -e "$ROOT/teamclaude-oauth-proxy.patch" ]] ||
+  fail "the OAuth proxy patch was retired: it now ships in the Hermes fork"
 [[ -x "$ROOT/runner/hermes-webui-launchd.sh" ]] ||
   fail "runner/hermes-webui-launchd.sh is missing or not executable"
 [[ -f "$ROOT/runner/com.parantoux.hermes-webui.plist.in" ]] ||
