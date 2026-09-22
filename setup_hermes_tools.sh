@@ -12,21 +12,22 @@ set -eu
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 hermes_home=${HERMES_HOME:-"${HOME}/.hermes"}
-comp_count_source="$script_dir/desktop-plugins/comp-count/plugin.js"
-comp_count_dir="$hermes_home/desktop-plugins/comp-count"
-comp_count_target="$comp_count_dir/plugin.js"
-provider_limits_source="$script_dir/plugins/provider-limits"
-provider_limits_target="$hermes_home/plugins/provider-limits"
 
-if test ! -f "$comp_count_source"; then
-  printf 'setup_hermes_tools: comp-count source is missing: %s\n' "$comp_count_source" >&2
-  exit 1
-fi
-if test ! -f "$provider_limits_source/desktop/plugin.js" \
-  || test ! -f "$provider_limits_source/dashboard/plugin_api.py"; then
-  printf 'setup_hermes_tools: provider-limits source is incomplete: %s\n' "$provider_limits_source" >&2
-  exit 1
-fi
+# Both plugins are unified packages: a desktop half the renderer loads and a
+# Python half the gateway imports. They install identically, so the work lives
+# in one function rather than in two copies that drift apart.
+packages='comp-count provider-limits'
+
+# Refuse EVERY incomplete source before writing anything: a half-installed
+# plugin whose backend is missing still gets imported and fails at runtime.
+for name in $packages; do
+  source_dir="$script_dir/plugins/$name"
+  if test ! -f "$source_dir/desktop/plugin.js" \
+    || test ! -f "$source_dir/dashboard/plugin_api.py"; then
+    printf 'setup_hermes_tools: %s source is incomplete: %s\n' "$name" "$source_dir" >&2
+    exit 1
+  fi
+done
 
 if test -n "${HERMES_BIN:-}"; then
   hermes_bin=$HERMES_BIN
@@ -37,62 +38,71 @@ else
   exit 127
 fi
 
-comp_count_changed=false
-if ! cmp -s "$comp_count_source" "$comp_count_target"; then
-  install -d -m 0755 "$comp_count_dir"
-  install -m 0644 "$comp_count_source" "$comp_count_target"
-  comp_count_changed=true
-fi
-
-# provider-limits is a directory with two halves, so compare the whole tree and
-# replace it wholesale: copying file-by-file would leave a file deleted upstream
-# behind in the installed copy, and a stale plugin_api.py still gets imported.
-provider_limits_changed=false
-provider_limits_backend_changed=false
-if ! diff -r -q \
-  -x '.git' -x '__pycache__' -x '*.pyc' \
-  "$provider_limits_source" "$provider_limits_target" >/dev/null 2>&1; then
-  # Only the BACKEND half needs a gateway restart. A desktop-only edit (CSS, the
-  # chip) reaches the screen through Electron's reconcile, and restarting for it
-  # would end the user's live sessions for nothing.
-  if ! diff -r -q \
-    -x '__pycache__' -x '*.pyc' \
-    "$provider_limits_source/dashboard" "$provider_limits_target/dashboard" >/dev/null 2>&1; then
-    provider_limits_backend_changed=true
-  fi
-  install -d -m 0755 "$hermes_home/plugins"
-  rm -rf "$provider_limits_target.tmp"
-  cp -R "$provider_limits_source" "$provider_limits_target.tmp"
-  rm -rf "$provider_limits_target.tmp/.git"
-  find "$provider_limits_target.tmp" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
-  rm -rf "$provider_limits_target"
-  mv "$provider_limits_target.tmp" "$provider_limits_target"
-  provider_limits_changed=true
-fi
-
-# The backend half must appear in plugins.enabled or its routes are never
-# imported (GHSA-mcfc-hp25-cjv7). Check before enabling: `plugins enable` is
-# idempotent but reports success either way, and treating that as a change
-# would restart the gateway on every run.
-provider_limits_enabled=false
-if "$hermes_bin" config get plugins.enabled 2>/dev/null | grep -qx -- '- provider-limits'; then
-  provider_limits_enabled=true
-fi
-provider_limits_gate_changed=false
-if test "$provider_limits_enabled" = false; then
-  "$hermes_bin" plugins enable --no-allow-tool-override provider-limits
-  provider_limits_gate_changed=true
-fi
-
 installed=''
-if test "$comp_count_changed" = true; then
-  installed="${installed:+$installed, }comp-count"
-fi
-if test "$provider_limits_changed" = true; then
-  installed="${installed:+$installed, }provider-limits"
-fi
-if test "$provider_limits_gate_changed" = true; then
-  installed="${installed:+$installed, }provider-limits backend gate"
+any_changed=false
+restart_needed=false
+gate_set=''
+
+# Install one package, updating the four globals above. A POSIX function cannot
+# return a tuple, so the state it reports is shared rather than passed back.
+install_package() {
+  name=$1
+  source_dir="$script_dir/plugins/$name"
+  target_dir="$hermes_home/plugins/$name"
+
+  # A package is a directory with two halves, so compare the whole tree and
+  # replace it wholesale: copying file-by-file would leave a file deleted
+  # upstream behind in the installed copy, and a stale plugin_api.py still gets
+  # imported.
+  if ! diff -r -q \
+    -x '.git' -x '__pycache__' -x '*.pyc' \
+    "$source_dir" "$target_dir" >/dev/null 2>&1; then
+    # Only the BACKEND half needs a gateway restart. A desktop-only edit (CSS,
+    # the chip) reaches the screen through Electron's reconcile, and restarting
+    # for it would end the user's live sessions for nothing.
+    if ! diff -r -q \
+      -x '__pycache__' -x '*.pyc' \
+      "$source_dir/dashboard" "$target_dir/dashboard" >/dev/null 2>&1; then
+      restart_needed=true
+    fi
+    install -d -m 0755 "$hermes_home/plugins"
+    rm -rf "$target_dir.tmp"
+    cp -R "$source_dir" "$target_dir.tmp"
+    rm -rf "$target_dir.tmp/.git"
+    find "$target_dir.tmp" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+    rm -rf "$target_dir"
+    mv "$target_dir.tmp" "$target_dir"
+    any_changed=true
+    installed="${installed:+$installed, }$name"
+  fi
+
+  # The backend half must appear in plugins.enabled or its routes are never
+  # imported (GHSA-mcfc-hp25-cjv7). Check before enabling: `plugins enable` is
+  # idempotent but reports success either way, and treating that as a change
+  # would restart the gateway on every run.
+  if ! "$hermes_bin" config get plugins.enabled 2>/dev/null | grep -qx -- "- $name"; then
+    "$hermes_bin" plugins enable --no-allow-tool-override "$name"
+    restart_needed=true
+    gate_set="${gate_set:+$gate_set, }$name"
+    installed="${installed:+$installed, }$name backend gate"
+  fi
+}
+
+for name in $packages; do
+  install_package "$name"
+done
+
+# The renderer-only disk copy from comp-count's previous layout must go, or the
+# app loads TWO plugins claiming id "comp-count": the stale one wins or they
+# collide, and either way the popover never appears. Electron re-materializes
+# the package's desktop half into this same directory, beside a
+# `.hermes-package.json` marker — a directory WITHOUT that marker is the retired
+# hand-installed copy, and only that one is removed.
+legacy_comp_count="$hermes_home/desktop-plugins/comp-count"
+if test -d "$legacy_comp_count" && test ! -f "$legacy_comp_count/.hermes-package.json"; then
+  rm -rf "$legacy_comp_count"
+  any_changed=true
+  installed="${installed:+$installed, }retired the old comp-count disk copy"
 fi
 
 # The desktop half the RENDERER loads is a third copy: Electron materializes
@@ -107,7 +117,7 @@ fi
 # the reconcile. With the app closed this is a no-op and the reconcile happens
 # at next launch anyway.
 desktop_root="$hermes_home/desktop-plugins"
-if test "$provider_limits_changed" = true && test -d "$desktop_root"; then
+if test "$any_changed" = true && test -d "$desktop_root"; then
   nudge="$desktop_root/.setup-hermes-tools-nudge"
   rm -rf "$nudge"
   if mkdir "$nudge" 2>/dev/null; then
@@ -120,11 +130,11 @@ fi
 # needs a restart — as does a newly set gate. A desktop-only change does not:
 # the renderer picks it up through the reconcile nudged above, and restarting
 # would end live sessions for nothing.
-if test "$provider_limits_backend_changed" = true || test "$provider_limits_gate_changed" = true; then
+if test "$restart_needed" = true; then
   "$hermes_bin" gateway restart
   printf 'Installed: %s; Hermes gateway restarted.\n' "$installed"
-  if test "$provider_limits_gate_changed" = true; then
-    printf 'Enable the provider-limits desktop half in Capabilities → Plugins to see the chip.\n'
+  if test -n "$gate_set"; then
+    printf 'Enable the desktop half of %s in Capabilities → Plugins to see the chip.\n' "$gate_set"
   fi
   exit 0
 fi

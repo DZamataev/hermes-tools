@@ -8,10 +8,13 @@ plugins installed.
 - `hermes-webui/` — pinned Git submodule for
   `git@github.com:DZamataev/hermes-webui.git`.
 - `runner/` — native Dock application and LaunchAgent lifecycle tools.
-- `desktop-plugins/comp-count/` — canonical Hermes Desktop status-bar plugin.
+- `plugins/comp-count/` — unified plugin (Python backend + desktop UI) showing
+  the focused session's working timeline: models, providers, segments and
+  compactions, behind the status-bar 🧳 chip.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
-- `setup_hermes_tools.sh` — installs both plugins under `~/.hermes`.
+- `setup_hermes_tools.sh` — installs both plugins as unified packages under
+  `~/.hermes/plugins`.
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
@@ -26,8 +29,8 @@ bun run check comp-count   # just the suites whose name matches
 ```
 
 **Not `bun test`.** Bun's own runner only collects files with `.test`/`.spec` in
-the name, so it would run the single comp-count file, skip the five shell suites
-and the Python bench, and report success. `bun run check` is the entry point;
+the name, so it would collect nothing at all here — every suite is a shell or
+Python bench — and report success. `bun run check` is the entry point;
 it runs the suites concurrently and prints the full output of whichever failed.
 
 Suites are safe to run at once: each builds its own `mktemp` sandbox and fakes

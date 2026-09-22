@@ -19,7 +19,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const suites = [
   { name: 'repository layout', cmd: ['zsh', 'tests/test_repository_layout.sh'] },
   { name: 'setup_hermes_tools', cmd: ['sh', 'tests/test-setup-hermes-tools.sh'] },
-  { name: 'comp-count', cmd: ['bun', 'test', 'desktop-plugins/comp-count/plugin.test.mjs'] },
+  { name: 'comp-count', cmd: ['bash', 'plugins/comp-count/tests/run.sh'] },
   { name: 'provider-limits', cmd: ['bash', 'plugins/provider-limits/tests/run.sh'] },
   { name: 'launchd', cmd: ['zsh', 'runner/tests/test_launchd.sh'] },
   { name: 'webui app', cmd: ['zsh', 'runner/tests/test_webui_app.sh'] },

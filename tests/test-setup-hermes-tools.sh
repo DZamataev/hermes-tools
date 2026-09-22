@@ -8,7 +8,7 @@ set -eu
 
 root_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 script="$root_dir/setup_hermes_tools.sh"
-plugin_source="$root_dir/desktop-plugins/comp-count/plugin.js"
+comp_count_source="$root_dir/plugins/comp-count"
 test_dir=$(mktemp -d)
 trap 'rm -rf "$test_dir"' EXIT HUP INT TERM
 
@@ -79,48 +79,50 @@ run_script() {
 
 # A writable copy of the repository, for cases that must dirty the source.
 fixture_src="$test_dir/repo"
-mkdir -p "$fixture_src/desktop-plugins/comp-count"
+mkdir -p "$fixture_src"
 cp "$script" "$fixture_src/setup_hermes_tools.sh"
-cp "$plugin_source" "$fixture_src/desktop-plugins/comp-count/plugin.js"
 cp -R "$root_dir/plugins" "$fixture_src/plugins"
 
 # --- first run: nothing installed yet ---------------------------------------
 
 run_script >/dev/null
 
-cmp -s "$plugin_source" "$test_dir/home/desktop-plugins/comp-count/plugin.js" ||
-  fail 'installs comp-count from the repository copy'
-
-# provider-limits is a two-half plugin: the desktop file alone is not enough,
-# and its backend is dead weight unless the gate is set.
-for half in desktop/plugin.js dashboard/plugin_api.py plugin.yaml tests/run.sh; do
-  cmp -s "$root_dir/plugins/provider-limits/$half" \
-    "$test_dir/home/plugins/provider-limits/$half" ||
-    fail "installs provider-limits/$half from the repository copy"
+# Both are two-half plugins: the desktop file alone is not enough, and a
+# backend is dead weight unless the gate is set.
+for name in comp-count provider-limits; do
+  for half in desktop/plugin.js dashboard/plugin_api.py plugin.yaml tests/run.sh; do
+    cmp -s "$root_dir/plugins/$name/$half" \
+      "$test_dir/home/plugins/$name/$half" ||
+      fail "installs $name/$half from the repository copy"
+  done
+  grep -qx -- "- $name" "$test_dir/plugins-state" ||
+    fail "enables the $name backend gate"
 done
-grep -qx -- '- provider-limits' "$test_dir/plugins-state" ||
-  fail 'enables the provider-limits backend gate'
 
 assert_equal "config get plugins.enabled
+plugins enable --no-allow-tool-override comp-count
+config get plugins.enabled
 plugins enable --no-allow-tool-override provider-limits
-gateway restart" "$(cat "$test_dir/log")" 'enables the gate and restarts on first install'
+gateway restart" "$(cat "$test_dir/log")" 'enables both gates and restarts on first install'
 
 # --- second run: everything already in place --------------------------------
 
 : >"$test_dir/log"
 run_script >/dev/null
-assert_equal 'config get plugins.enabled' "$(cat "$test_dir/log")" \
+assert_equal 'config get plugins.enabled
+config get plugins.enabled' "$(cat "$test_dir/log")" \
   'does nothing when the plugins are already installed'
 
-# --- comp-count alone must not restart the gateway --------------------------
+# --- a comp-count desktop-only change must not restart the gateway ----------
 
 : >"$test_dir/log"
-printf 'stale plugin\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
+printf 'stale plugin\n' >"$test_dir/home/plugins/comp-count/desktop/plugin.js"
 run_script >/dev/null
-cmp -s "$plugin_source" "$test_dir/home/desktop-plugins/comp-count/plugin.js" ||
-  fail 'restores an outdated comp-count installation'
+cmp -s "$comp_count_source/desktop/plugin.js" \
+  "$test_dir/home/plugins/comp-count/desktop/plugin.js" ||
+  fail 'restores an outdated comp-count desktop half'
 if grep -qx 'gateway restart' "$test_dir/log"; then
-  fail 'restarts the gateway when only comp-count changed'
+  fail 'restarts the gateway when only the comp-count desktop half changed'
 fi
 
 # --- a desktop-only change must NOT restart the gateway ---------------------
@@ -163,7 +165,12 @@ grep -qx 'gateway restart' "$test_dir/log" ||
 # (only Electron may), so it touches the root the app watches.
 #
 # The nudge is observed the way the app observes it: a real fswatch on the root.
+#
+# The root is created here on purpose. Electron owns it; no package writes into
+# it any more, so a fixture that never launched the app would not have one and
+# the nudge would (correctly) be skipped.
 : >"$test_dir/log"
+mkdir -p "$test_dir/home/desktop-plugins"
 printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
 before_inode=$(stat -f '%i %m' "$test_dir/home/desktop-plugins" 2>/dev/null || echo none)
 : >"$test_dir/fswatch"
@@ -203,16 +210,40 @@ if ls -a "$test_dir/home/desktop-plugins" 2>/dev/null | grep -q nudge; then
 fi
 
 # Restore the root for the checks that follow.
+mkdir -p "$test_dir/home/desktop-plugins"
+
+# --- the retired comp-count disk copy is removed ----------------------------
+
+# comp-count used to install as a lone plugin.js under desktop-plugins/. Left
+# behind, the app loads TWO plugins claiming id "comp-count" and the popover
+# never appears. Electron's own materialized copy carries a
+# .hermes-package.json marker and must SURVIVE.
+: >"$test_dir/log"
 mkdir -p "$test_dir/home/desktop-plugins/comp-count"
-printf 'stale plugin\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
+printf 'retired copy\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
+run_script >/dev/null
+if test -e "$test_dir/home/desktop-plugins/comp-count"; then
+  fail 'leaves the retired comp-count disk copy in place'
+fi
+
+: >"$test_dir/log"
+mkdir -p "$test_dir/home/desktop-plugins/comp-count"
+printf 'materialized\n' >"$test_dir/home/desktop-plugins/comp-count/plugin.js"
+printf '{}\n' >"$test_dir/home/desktop-plugins/comp-count/.hermes-package.json"
+run_script >/dev/null
+test -f "$test_dir/home/desktop-plugins/comp-count/.hermes-package.json" ||
+  fail "removes Electron's own materialized copy of the package"
+rm -rf "$test_dir/home/desktop-plugins/comp-count"
 
 # --- a gate the user turned off is set again --------------------------------
 
 : >"$test_dir/log"
 : >"$test_dir/plugins-state"
 run_script >/dev/null
-grep -qx -- '- provider-limits' "$test_dir/plugins-state" ||
-  fail 're-enables a gate that is no longer set'
+for name in comp-count provider-limits; do
+  grep -qx -- "- $name" "$test_dir/plugins-state" ||
+    fail "re-enables the $name gate once it is no longer set"
+done
 grep -qx 'gateway restart' "$test_dir/log" ||
   fail 'does not restart after setting the gate again'
 
@@ -249,9 +280,9 @@ fi
 # --- incomplete sources are refused before anything is written --------------
 
 fixture="$test_dir/incomplete"
-mkdir -p "$fixture/desktop-plugins/comp-count" "$fixture/plugins/provider-limits/desktop"
+mkdir -p "$fixture/plugins/provider-limits/desktop"
 cp "$script" "$fixture/setup_hermes_tools.sh"
-cp "$plugin_source" "$fixture/desktop-plugins/comp-count/plugin.js"
+cp -R "$root_dir/plugins/comp-count" "$fixture/plugins/comp-count"
 cp "$root_dir/plugins/provider-limits/desktop/plugin.js" \
   "$fixture/plugins/provider-limits/desktop/plugin.js"
 : >"$test_dir/log"

@@ -21,8 +21,16 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
   fail "runner/hermes-webui-launchd.sh is missing or not executable"
 [[ -f "$ROOT/runner/com.parantoux.hermes-webui.plist.in" ]] ||
   fail "Hermes WebUI LaunchAgent template is missing"
-[[ -f "$ROOT/desktop-plugins/comp-count/plugin.js" ]] ||
-  fail "comp-count desktop plugin is missing"
+[[ -f "$ROOT/plugins/comp-count/desktop/plugin.js" ]] ||
+  fail "comp-count desktop half is missing"
+[[ -f "$ROOT/plugins/comp-count/dashboard/plugin_api.py" ]] ||
+  fail "comp-count backend half is missing"
+[[ -x "$ROOT/plugins/comp-count/tests/run.sh" ]] ||
+  fail "comp-count test bench is missing or not executable"
+# comp-count became a unified package; the renderer-only copy must not come back
+# or the app loads two plugins claiming the same id.
+[[ ! -e "$ROOT/desktop-plugins" ]] ||
+  fail "the retired desktop-plugins/ root is back: comp-count ships under plugins/"
 [[ -f "$ROOT/plugins/provider-limits/desktop/plugin.js" ]] ||
   fail "provider-limits desktop half is missing"
 [[ -f "$ROOT/plugins/provider-limits/dashboard/plugin_api.py" ]] ||
