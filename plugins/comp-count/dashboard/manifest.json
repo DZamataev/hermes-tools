@@ -1,0 +1,9 @@
+{
+  "name": "comp-count",
+  "label": "Session timeline",
+  "description": "Models, providers and working segments of the focused session",
+  "icon": "Activity",
+  "version": "0.2.0",
+  "tab": { "path": "/comp-count", "hidden": true },
+  "api": "plugin_api.py"
+}

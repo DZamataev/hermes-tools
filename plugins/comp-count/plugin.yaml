@@ -1,0 +1,5 @@
+name: comp-count
+version: 0.2.0
+description: "Session timeline (models, providers, working segments, compactions) in the desktop status bar."
+author: "Denis"
+kind: standalone
