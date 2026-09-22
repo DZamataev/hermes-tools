@@ -20,18 +20,12 @@ Clicking the chip opens a popover (the `provider-limits` pattern:
 listing the session as **working segments**. One segment is one continuous
 stretch of work, split wherever the session went quiet for more than an hour.
 
-Each segment renders as a Gantt-style row (shown here in both shipped locales —
-the panel follows the app's language, see Rendering rules):
+Each segment renders as a Gantt-style row:
 
 ```
 03.09 16:35–17:47   █▂▂▂▁▃▃▃▄▃▂▁▂▃▂▃▃▂▂▃    1h12m
                     ▲      ▲       ▲   gpt-5.6-sol · codex-lb-oneclick
                     96 prompts · 1131 tool calls · 🧳3
-                    patch×369, terminal×288, read_file×219
-
-03.09 16:35–17:47   █▂▂▂▁▃▃▃▄▃▂▁▂▃▂▃▃▂▂▃    1ч12м
-                    ▲      ▲       ▲   gpt-5.6-sol · codex-lb-oneclick
-                    96 промптов · 1131 вызов инструментов · 🧳3
                     patch×369, terminal×288, read_file×219
 ```
 
@@ -162,14 +156,13 @@ compactions of `20260907_112911_4b3fc5` land inside a segment; none are orphaned
 - The panel is ~360px (`provider-limits` uses 328px); 20 sparkline blocks fit.
 - Sparkline and marker rows use a tabular/monospace treatment so blocks and
   markers line up column for column.
-- **Copy is localized, never hardcoded in one language.** The plugin ships its
-  own locale bundles and registers them with `ctx.i18n.register(...)` at load,
-  reading them back through `usePluginI18n('comp-count')`. Resolution is the
-  app's: active `display.language` → the plugin's `en` bundle → the key. The
-  plugin follows the user's language choice; it does not own it. `en` is
-  mandatory (it is the fallback); `ru` ships alongside it because this operator
-  runs the app in Russian. The existing `provider-limits` panel is unaffected
-  and stays as it is.
+- **Copy goes through the plugin's own locale bundle, never hardcoded at the
+  call site.** The plugin registers its strings with `ctx.i18n.register(...)` at
+  load and reads them through `usePluginI18n('comp-count')` — core's `en.ts` is
+  never touched. English only for now: `en` is what the app's resolver falls
+  back to, so an English-only plugin renders correctly under any app language,
+  and adding a locale later is one more key in the bundle with no call-site
+  change. `provider-limits` is unaffected.
 - Every payload field is read defensively (`list()`/`pct()`-style guards): the
   data crosses a process boundary, and one malformed field must degrade a row,
   never throw during render and take the status bar down with it.
@@ -203,9 +196,9 @@ Extending the existing suites; `bun run check` stays the entry point and gains a
    - an auxiliary-task route never appears as a segment route;
    - a cluster with no operator prompt is dropped.
 2. **Renderer, pure functions** — bucketing, the non-empty-bucket floor, marker
-   placement, duration formatting in both locales, bundle-parity between `en`
-   and `ru` (a key in one and not the other strands a foreign sentence in the
-   panel), and the defensive guards against malformed payloads.
+   placement, duration formatting, every panel key resolving against the bundle
+   (a renamed key otherwise ships as visible raw text), and the defensive guards
+   against malformed payloads.
 3. **Chip regression** — the existing `plugin.test.mjs` cases keep passing
    unchanged after the move to `plugins/comp-count/desktop/plugin.js`.
 4. **Mutation check, by hand** — break each rule in the source, watch the

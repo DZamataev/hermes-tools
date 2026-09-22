@@ -21,7 +21,7 @@
 - **`GAP_SECONDS = 3600.0`** — the pause that splits one working segment from the next.
 - **`SPARK_BUCKETS = 20`** — the sparkline width, everywhere.
 - **`BLOCKS = " ▁▂▃▄▅▆▇█"`** — bucket glyphs, index 0 unused for non-empty buckets (see the floor rule in Task 3).
-- **Panel copy is localized, never hardcoded in one language.** The plugin ships its own locale bundles, registers them with `ctx.i18n.register(...)` in `register`, and reads them through `usePluginI18n('comp-count')`; the active language is the app's `display.language`. `en` is mandatory — it is the fallback when a key is missing from the active locale — and `ru` ships beside it. Any helper that produces words takes the translator `t` as an argument; helpers that produce only numbers and glyphs do not. Do not touch `provider-limits`, whose panel is English by its own choice.
+- **Panel copy goes through the plugin's own locale bundles, never hardcoded at the call site.** The plugin ships an `en` bundle, registers it with `ctx.i18n.register(...)` in `register`, and reads it through `usePluginI18n('comp-count')`; the active language is the app's `display.language`. English only for now — `en` is the resolver's fallback, so an English-only plugin renders correctly under any app language, and adding a locale later is one more key in `LOCALES` with no call-site change. Any helper that produces words takes the translator `t` as an argument; helpers that produce only numbers and glyphs do not. Do not touch `provider-limits`.
 - **Never write a secret, key, or token into this package.** Before any commit that touches tracked files, `gitleaks dir --redact .` must report no new findings beyond the pre-existing ones in `.env.local` and the `hermes-webui/` submodule fixtures.
 
 ---
@@ -764,10 +764,10 @@ Pure functions first, with no React and no SDK in sight. They are where the visu
 - Consumes: the segment shape from Task 1.
 - Produces, all named exports of `desktop/plugin.js`:
   - `BLOCKS: string` — `" ▁▂▃▄▅▆▇█"`.
-  - `LOCALES: object` — `{ en: {...}, ru: {...} }`, the bundles `ctx.i18n.register` takes.
+  - `LOCALES: object` — `{ en: {...} }`, the bundles `ctx.i18n.register` takes.
   - `sparkline(buckets: number[], peak: number): string` — 20 glyphs.
   - `markerRow(segment): string` — 20 chars, `▲` where a compaction falls, spaces elsewhere.
-  - `formatDuration(seconds: number, t: PluginTranslate): string` — `"45m"` / `"45м"`, `"1h12m"` / `"1ч12м"`, `"2d3h"` / `"2д3ч"`, per the active locale.
+  - `formatDuration(seconds: number, t: PluginTranslate): string` — `"45m"`, `"1h12m"`, `"2d3h"`.
   - `formatSpan(startSeconds: number, endSeconds: number): string` — `"03.09 16:35–17:47"`, carrying the end date when it differs. Digits only, so it takes no translator.
   - `routeLabel(segment, t: PluginTranslate): string` — `"m1 · p1 → m2 · p2"`, or `t('route.unknown')` when empty.
   - `toolsLabel(segment): string` — `"patch×369, terminal×288"`, or `""`. Tool names are identifiers, not prose; no translator.
@@ -818,8 +818,8 @@ export const host = { state: { focusedUsage: null, focusedStoredSessionId: null,
 export const useValue = value => (globalThis.__probeValues ?? new Map()).get(value) ?? value
 export const useQuery = () => globalThis.__probeQuery ?? { data: null, error: null, isFetching: false }
 export const useQueryClient = () => ({ setQueryData() {} })
-// The probe drives locale resolution through this global: the checks exercise
-// BOTH bundles, so a key present in en but missing in ru is a visible failure.
+// The probe drives locale resolution through this global, so the checks can
+// exercise the plugin's own bundle rather than the app's live translator.
 export const usePluginI18n = () => globalThis.__probeTranslate ?? (key => key)
 """)
 (react / "package.json").write_text(json.dumps({
@@ -846,7 +846,7 @@ const check = (name, ok, detail = '') => {
   if (!ok) failures.push(name + (detail ? ` — ${detail}` : ''))
 }
 
-// A translator over one bundle, resolving dot-paths and calling function leaves
+// A translator over the bundle, resolving dot-paths and calling function leaves
 // — the same resolution the app's plugin i18n performs, minus React.
 const translator = locale => (key, ...args) => {
   const leaf = key.split('.').reduce((node, part) => (node ?? {})[part], LOCALES[locale])
@@ -854,7 +854,6 @@ const translator = locale => (key, ...args) => {
   return typeof leaf === 'function' ? leaf(...args) : leaf
 }
 const en = translator('en')
-const ru = translator('ru')
 
 // --- sparkline --------------------------------------------------------------
 
@@ -888,15 +887,11 @@ check('no-markers-no-row', markerRow({ ...seg, compactions: [] }).trim() === '')
 
 // --- duration ---------------------------------------------------------------
 
-check('minutes-en', formatDuration(45 * 60, en) === '45m', formatDuration(45 * 60, en))
-check('minutes-ru', formatDuration(45 * 60, ru) === '45м', formatDuration(45 * 60, ru))
-check('hours-en', formatDuration(72 * 60, en) === '1h12m', formatDuration(72 * 60, en))
-check('hours-ru', formatDuration(72 * 60, ru) === '1ч12м', formatDuration(72 * 60, ru))
-check('days-en', formatDuration(51 * 3600, en) === '2d3h', formatDuration(51 * 3600, en))
-check('days-ru', formatDuration(51 * 3600, ru) === '2д3ч', formatDuration(51 * 3600, ru))
+check('minutes', formatDuration(45 * 60, en) === '45m', formatDuration(45 * 60, en))
+check('hours', formatDuration(72 * 60, en) === '1h12m', formatDuration(72 * 60, en))
+check('days', formatDuration(51 * 3600, en) === '2d3h', formatDuration(51 * 3600, en))
 // Under a minute is "<1m", not the "0m" a floor produces.
-check('sub-minute-en', formatDuration(30, en) === '<1m', formatDuration(30, en))
-check('sub-minute-ru', formatDuration(30, ru) === '<1м', formatDuration(30, ru))
+check('sub-minute', formatDuration(30, en) === '<1m', formatDuration(30, en))
 
 // --- span -------------------------------------------------------------------
 
@@ -913,10 +908,8 @@ check('route-single', routeLabel({ routes: [{ model: 'm1', provider: 'p1' }] }, 
 check('route-multi',
       routeLabel({ routes: [{ model: 'm1', provider: 'p1' }, { model: 'm2', provider: 'p2' }] }, en)
       === 'm1 · p1 → m2 · p2')
-check('route-empty-en', routeLabel({ routes: [] }, en) === 'unknown route',
+check('route-empty', routeLabel({ routes: [] }, en) === 'unknown route',
       routeLabel({ routes: [] }, en))
-check('route-empty-ru', routeLabel({ routes: [] }, ru) === 'маршрут неизвестен',
-      routeLabel({ routes: [] }, ru))
 // A route with no provider must not render a dangling separator.
 check('route-no-provider', routeLabel({ routes: [{ model: 'm1', provider: '' }] }, en) === 'm1')
 
@@ -925,25 +918,20 @@ check('tools', toolsLabel({ topTools: [{ name: 'patch', count: 9 }, { name: 'ter
       === 'patch×9, terminal×4')
 check('tools-empty', toolsLabel({ topTools: [] }) === '')
 
-// --- locale bundles ---------------------------------------------------------
+// --- locale bundle ----------------------------------------------------------
 
-// `en` is the fallback the app resolves against, so every key the plugin uses
-// must exist there. And a key present in `en` but missing in `ru` would strand
-// an English sentence inside a Russian panel — the exact defect this section
-// guards.
+// Every key the panel renders must exist in the bundle. A typo'd or renamed key
+// falls through to the raw path ("counts.prompts") and ships as visible UI.
 const paths = (node, prefix = '') => Object.entries(node).flatMap(([key, value]) => {
   const path = prefix ? `${prefix}.${key}` : key
   return value && typeof value === 'object' ? paths(value, path) : [path]
 })
-const enPaths = paths(LOCALES.en).sort()
-const ruPaths = paths(LOCALES.ru).sort()
-check('en-bundle-present', enPaths.length > 0)
-check('locales-have-same-keys', JSON.stringify(enPaths) === JSON.stringify(ruPaths),
-      JSON.stringify({ missingInRu: enPaths.filter(p => !ruPaths.includes(p)),
-                       extraInRu: ruPaths.filter(p => !enPaths.includes(p)) }))
-// Nothing the panel renders may fall through to the raw key.
+check('en-bundle-present', paths(LOCALES.en).length > 0)
 check('no-missing-keys', ![
-  routeLabel({ routes: [] }, en), formatDuration(600, en), formatDuration(30, en)
+  routeLabel({ routes: [] }, en), formatDuration(600, en), formatDuration(30, en),
+  formatDuration(51 * 3600, en), en('title'), en('noSession'), en('noSegments'),
+  en('segments', 2), en('chipTitle', 3), en('backendDown', 'x'),
+  en('counts.prompts', 1), en('counts.tools', 1)
 ].some(text => text.startsWith('MISSING:')))
 
 // --- defensive guards -------------------------------------------------------
@@ -1009,10 +997,11 @@ const ID = 'comp-count'
 const BLOCKS = ' ▁▂▃▄▅▆▇█'
 const SPARK_BUCKETS = 20
 
-// Locale bundles, registered under this plugin's id at load. The panel follows
-// the app's `display.language`; it does not pick a language of its own. `en` is
-// the fallback the resolver drops to when a key is missing, so it must carry
-// every key the panel uses — the renderer suite asserts both bundles agree.
+// Locale bundle, registered under this plugin's id at load. The panel follows
+// the app's `display.language`; it does not pick a language of its own. English
+// only for now — `en` is the resolver's fallback, so this renders correctly
+// under any app language, and adding a locale is one more key here with no
+// change at any call site.
 const LOCALES = {
   en: {
     title: 'Session timeline',
@@ -1032,26 +1021,6 @@ const LOCALES = {
       minutes: m => `${m}m`,
       hoursMinutes: (h, m) => `${h}h${m}m`,
       daysHours: (d, h) => `${d}d${h}h`
-    }
-  },
-  ru: {
-    title: 'Хронология сессии',
-    segments: n => `${n} отрезков`,
-    noSession: 'Сессия ещё не начата.',
-    noSegments: 'В этой сессии ещё нет рабочих отрезков.',
-    backendDown: error =>
-      `Бэкенд недоступен — добавьте "comp-count" в plugins.enabled и перезапустите шлюз. (${error})`,
-    chipTitle: n => `Компакций в этой сессии: ${n}`,
-    route: { unknown: 'маршрут неизвестен' },
-    counts: {
-      prompts: n => `${n} промптов`,
-      tools: n => `${n} вызовов инструментов`
-    },
-    duration: {
-      lessThanMinute: '<1м',
-      minutes: m => `${m}м`,
-      hoursMinutes: (h, m) => `${h}ч${m}м`,
-      daysHours: (d, h) => `${d}д${h}ч`
     }
   }
 }
@@ -1188,11 +1157,13 @@ Expected: PASS. The suite exercises only the exported helpers, which now exist.
    Run. Expected: `marker-at-start` or `marker-at-end` fails. Revert.
 3. In `formatSpan`, always return the short tail (drop the `toDateString` comparison).
    Run. Expected: `cross-day-span` fails. Revert.
-4. In `LOCALES.ru`, delete the `route` key.
-   Run. Expected: `locales-have-same-keys` fails, naming `route.unknown` as missing in `ru`. Revert.
+4. In `LOCALES.en`, rename `route.unknown` to `route.missing`.
+   Run. Expected: `route-empty` and `no-missing-keys` fail — the panel would
+   otherwise ship the raw key `route.unknown` as visible text. Revert.
 5. In `formatDuration`, replace `t('duration.minutes', minutes)` with a hardcoded
-   `` `${minutes}m` ``. Run. Expected: `minutes-ru` fails — the Russian panel would
-   otherwise print an English unit. Revert.
+   `` `${minutes}m` ``. Run. Expected: nothing fails, because the literal matches
+   the bundle today — which is exactly why the rule is a constraint, not a test:
+   a hardcoded string is invisible until a locale is added. Revert it anyway.
 
 - [ ] **Step 6: Commit**
 
@@ -1703,23 +1674,13 @@ Expected: the package exists under `plugins/`. Under `desktop-plugins/` there is
 - [ ] **Step 4: Open the popover on a real session**
 
 Open the desktop, focus a long-running chat, click the 🧳 chip. Check by eye:
-- the panel's copy is in the language the app is set to, with no stray English
-  (or Russian) sentence and no raw key like `counts.prompts` showing through;
+- no raw key like `counts.prompts` or `route.unknown` shows through as text;
 - segments are listed newest-last with plausible times;
 - the sparkline is 20 glyphs wide and its `▲` markers sit under blocks, not offset;
 - the route line names a model and provider you recognise for that session;
 - counts and tools look sane for the work you remember doing.
 
-- [ ] **Step 5: Switch the app language and re-open the panel**
-
-In Settings, change the interface language (Russian ↔ English), then open the
-popover again. Every string must follow — the plugin reads the app's
-`display.language` and owns no language of its own. A string that stays put is a
-hardcoded literal that escaped the bundles; find and move it into `LOCALES`.
-
-Restore the language you normally use before moving on.
-
-- [ ] **Step 6: Cross-check one segment against the database**
+- [ ] **Step 5: Cross-check one segment against the database**
 
 Take the first segment's start time from the panel and confirm the store agrees:
 
@@ -1733,7 +1694,7 @@ sqlite3 ~/.hermes/state.db "
 
 The panel's first segment must start at the first real operator prompt, not earlier.
 
-- [ ] **Step 7: Check the failure path**
+- [ ] **Step 6: Check the failure path**
 
 Temporarily disable the backend gate and confirm the panel degrades honestly rather than going blank or crashing the status bar:
 
@@ -1741,13 +1702,13 @@ Temporarily disable the backend gate and confirm the panel degrades honestly rat
 hermes plugins disable comp-count && hermes gateway restart
 ```
 
-Expected: the chip still shows `🧳 N`; the popover shows the `backendDown` line in the app's language. Then restore:
+Expected: the chip still shows `🧳 N`; the popover shows the `backendDown` line. Then restore:
 
 ```bash
 hermes plugins enable --no-allow-tool-override comp-count && hermes gateway restart
 ```
 
-- [ ] **Step 8: Report**
+- [ ] **Step 7: Report**
 
 State what was verified and anything that did not match. If a defect appears, fix it in the owning task's file, re-run `bun run check`, and re-verify — do not paper over it in the renderer.
 
@@ -1755,7 +1716,7 @@ State what was verified and anything that did not match. If a defect appears, fi
 
 ## Self-Review
 
-**Spec coverage.** Every spec section maps to a task: the backend package and read-only store access, prompt rule, `active OR compacted` read, clustering rule, promptless-cluster drop, route `task=''` filter and the accepted aggregate-ordering limit → Task 1, proven against real data in Task 2. Sparkline, marker placement, the non-empty-bucket floor, duration/span formatting, localized copy through `ctx.i18n.register` + `usePluginI18n`, defensive guards, theme variables, the ~360px panel and monospace alignment → Tasks 3–4. Chip non-regression → Task 4, Step 1. Failure and empty states (backend absent, no session, no segments, route unknown) → Task 4, Step 3 and Task 6, Step 7; the language actually following the app is verified live in Task 6, Step 5. The excluded items (cost, context growth, day ribbon) appear nowhere, which is correct. Installer, gate, stale-copy removal, `check.mjs`, README → Task 5.
+**Spec coverage.** Every spec section maps to a task: the backend package and read-only store access, prompt rule, `active OR compacted` read, clustering rule, promptless-cluster drop, route `task=''` filter and the accepted aggregate-ordering limit → Task 1, proven against real data in Task 2. Sparkline, marker placement, the non-empty-bucket floor, duration/span formatting, copy routed through `ctx.i18n.register` + `usePluginI18n`, defensive guards, theme variables, the ~360px panel and monospace alignment → Tasks 3–4. Chip non-regression → Task 4, Step 1. Failure and empty states (backend absent, no session, no segments, route unknown) → Task 4, Step 3 and Task 6, Step 6. The excluded items (cost, context growth, day ribbon) appear nowhere, which is correct. Installer, gate, stale-copy removal, `check.mjs`, README → Task 5.
 
 **Placeholders.** None: every code step carries the actual content, every test step names the command and the expected result, and the mutation steps say which check must fail.
 
