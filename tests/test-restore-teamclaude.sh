@@ -295,3 +295,33 @@ if ! grep -qx 'gateway restart' "$test_dir/log"; then
 fi
 
 printf 'PASS: restore-teamclaude.sh\n'
+
+# A three-way --check can succeed even when applying writes conflict markers.
+# Exercise real git and assert an incompatible patch leaves the checkout intact.
+fixture="$test_dir/conflict"
+mkdir -p "$fixture/tools/desktop-plugins/comp-count" "$fixture/source"
+cp "$script" "$fixture/tools/restore-teamclaude.sh"
+cp "$plugin_source" "$fixture/tools/desktop-plugins/comp-count/plugin.js"
+git -C "$fixture/source" init -q
+git -C "$fixture/source" config user.name Test
+git -C "$fixture/source" config user.email test@example.invalid
+printf 'value = "base"\n' >"$fixture/source/example.py"
+git -C "$fixture/source" add example.py
+git -C "$fixture/source" commit -qm base
+printf 'value = "patched"\n' >"$fixture/source/example.py"
+git -C "$fixture/source" diff >"$fixture/tools/teamclaude-oauth-proxy.patch"
+printf 'value = "upstream"\n' >"$fixture/source/example.py"
+git -C "$fixture/source" add example.py
+git -C "$fixture/source" commit -qm upstream
+: >"$test_dir/log"
+if HERMES_SOURCE_DIR="$fixture/source" HERMES_HOME="$fixture/home" \
+  HERMES_GIT_BIN="$(command -v git)" HERMES_BIN="$fake_hermes" \
+  FAKE_HERMES_LOG="$test_dir/log" FAKE_HERMES_STATE="$test_dir/state" \
+  "$fixture/tools/restore-teamclaude.sh" >"$fixture/output" 2>&1; then
+  printf 'FAIL: accepts a conflicting patch\n' >&2
+  exit 1
+fi
+assert_equal 'value = "upstream"' "$(cat "$fixture/source/example.py")" 'preserves source on patch conflict'
+assert_equal '' "$(git -C "$fixture/source" status --porcelain)" 'preserves index on patch conflict'
+assert_equal '' "$(cat "$test_dir/log")" 'does not configure or restart after patch conflict'
+printf 'PASS: incompatible patch leaves checkout untouched\n'

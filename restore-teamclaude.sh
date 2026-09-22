@@ -52,10 +52,9 @@ if "$git_bin" -C "$source_dir" apply --reverse --check "$patch_file" >/dev/null 
 elif "$git_bin" -C "$source_dir" apply --check "$patch_file" >/dev/null 2>&1; then
   "$git_bin" -C "$source_dir" apply "$patch_file"
   code_changed=true
-elif "$git_bin" -C "$source_dir" apply --3way --check "$patch_file" >/dev/null 2>&1; then
-  "$git_bin" -C "$source_dir" apply --3way "$patch_file"
-  code_changed=true
 else
+  # --3way --check can succeed even when the apply would write conflict markers.
+  # Refuse incompatible updates before touching runnable source or the index.
   printf 'restore-teamclaude: OAuth proxy patch no longer applies cleanly after this Hermes update\n' >&2
   printf 'restore-teamclaude: rebase %s onto %s before restarting Hermes\n' "$patch_file" "$source_dir" >&2
   exit 1
