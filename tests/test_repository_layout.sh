@@ -6,7 +6,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 fail() { print -u2 -- "FAIL: $*"; exit 1; }
 
 [[ -f "$ROOT/README.md" ]] || fail "README.md is missing"
-[[ -f "$ROOT/Makefile" ]] || fail "Makefile is missing"
+[[ -f "$ROOT/package.json" ]] || fail "package.json is missing"
+[[ -f "$ROOT/scripts/check.mjs" ]] || fail "scripts/check.mjs is missing"
+[[ ! -e "$ROOT/Makefile" ]] || fail "the Makefile was replaced by bun scripts"
 [[ -x "$ROOT/setup_hermes_tools.sh" ]] || fail "setup_hermes_tools.sh is missing or not executable"
 [[ ! -e "$ROOT/restore-teamclaude.sh" ]] ||
   fail "restore-teamclaude.sh was renamed to setup_hermes_tools.sh"
@@ -54,8 +56,13 @@ done
 [[ "$(git config -f "$ROOT/.gitmodules" --get submodule.hermes-webui.url)" == "git@github.com:DZamataev/hermes-webui.git" ]] ||
   fail "hermes-webui submodule URL is incorrect"
 
-grep -Fq 'make app' "$ROOT/README.md" || fail "README must document the Dock app"
-grep -Fq 'make webui-enable' "$ROOT/README.md" || fail "README must document launchd"
+grep -Fq 'bun run app' "$ROOT/README.md" || fail "README must document the Dock app"
+grep -Fq 'bun run webui:enable' "$ROOT/README.md" || fail "README must document launchd"
+grep -Fq 'bun run check' "$ROOT/README.md" || fail "README must document the test entry point"
+# `bun test` runs bun's own file-name-matching runner and would silently skip
+# every shell suite, so the README must never tell anyone to use it.
+! grep -Eq '^\s*bun test\b' "$ROOT/README.md" ||
+  fail "README suggests 'bun test', which runs only the bun test files"
 grep -Fq '127.0.0.1:8787' "$ROOT/README.md" || fail "README must document the native endpoint"
 grep -Fq 'runner/hermes-webui-app.sh' "$ROOT/README.md" || fail "README must document app lifecycle commands"
 ! rg -n 'OpenWebUI|open-webui|localhost:11001|Docker Compose lifecycle' "$ROOT/README.md" >/dev/null ||

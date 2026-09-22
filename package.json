@@ -1,0 +1,14 @@
+{
+  "name": "hermes-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "bun run scripts/check.mjs",
+    "app": "zsh runner/build-app.sh",
+    "bootstrap": "git submodule update --init --recursive",
+    "webui:enable": "zsh runner/hermes-webui-launchd.sh enable",
+    "webui:disable": "zsh runner/hermes-webui-launchd.sh disable",
+    "webui:restart": "zsh runner/hermes-webui-launchd.sh restart",
+    "webui:status": "zsh runner/hermes-webui-launchd.sh status"
+  }
+}

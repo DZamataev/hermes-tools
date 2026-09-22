@@ -12,15 +12,25 @@ plugins installed.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
 - `setup_hermes_tools.sh` — installs both plugins under `~/.hermes`.
+- `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
 ## Bootstrap and test
 
 ```bash
-make bootstrap
-make test
+bun run bootstrap          # git submodule update --init --recursive
+bun run check              # every suite, concurrently
+bun run check comp-count   # just the suites whose name matches
 ```
+
+**Not `bun test`.** Bun's own runner only collects files with `.test`/`.spec` in
+the name, so it would run the single comp-count file, skip the five shell suites
+and the Python bench, and report success. `bun run check` is the entry point;
+it runs the suites concurrently and prints the full output of whichever failed.
+
+Suites are safe to run at once: each builds its own `mktemp` sandbox and fakes
+`launchctl` and `curl`, so they share no port, file or launchd state.
 
 ## Setup
 
@@ -60,7 +70,7 @@ plugins/provider-limits/tests/run.sh          # 53 checks, offline
 plugins/provider-limits/tests/run.sh --e2e    # plus real route and upstreams
 ```
 
-`make test` runs the offline pass. See the plugin's own README for what it draws
+`bun run check` runs the offline pass. See the plugin's own README for what it draws
 and why.
 
 ## Dock application
@@ -68,7 +78,7 @@ and why.
 Build the stay-open macOS application:
 
 ```bash
-make app
+bun run app
 ```
 
 This creates `Hermes WebUI.app` in the repository root. Opening it binds the
@@ -96,10 +106,10 @@ For an always-on service that starts at login and restarts after failures, use
 the existing macOS user LaunchAgent:
 
 ```bash
-make webui-enable   # enable launch-at-login and start now
-make webui-status
-make webui-restart
-make webui-disable  # stop now and disable launch-at-login
+bun run webui:enable   # enable launch-at-login and start now
+bun run webui:status
+bun run webui:restart
+bun run webui:disable  # stop now and disable launch-at-login
 ```
 
 The LaunchAgent defaults to port 8787 and bind address `0.0.0.0`, so configure
