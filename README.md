@@ -10,7 +10,8 @@ plugins installed.
 - `runner/` — native Dock application and LaunchAgent lifecycle tools.
 - `plugins/comp-count/` — unified plugin (Python backend + desktop UI) showing
   the focused session's working timeline: models, providers, segments and
-  compactions, behind the status-bar 🧳 chip.
+  compactions, plus session-wide token use and estimated API cost, behind the
+  status-bar 🧳 chip.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
 - `setup_hermes_tools.sh` — installs both plugins as unified packages under
@@ -69,6 +70,30 @@ working configuration, and "repairing" them would have broken a live install.
 The script cannot enable either **desktop** half: the loader forces a
 materialized package off whatever the plugin declares, so flip them on once in
 Capabilities → Plugins.
+
+## Cost estimates in comp-count
+
+The panel's cost line is **list price for the tokens actually used**, at rates
+fetched from `openrouter.ai/api/v1/models` (cached on disk, refreshed daily,
+served stale when the network is down). It answers "what would this session
+have billed through a paid API", not what a subscription charges — TeamClaude
+and the codex gateways bill through Anthropic and ChatGPT plans, where tokens
+never become a per-token invoice.
+
+Hermes carries its own rate table in `agent/usage_pricing.py`, and the plugin
+deliberately ignores it: that table is a hand-copied snapshot, it prices
+`gpt-5.6-sol` at $5/$30 where OpenRouter currently says $2/$10, and it has no
+entry at all for `claude-opus-5`. Cache reads dominate a long session — 108M
+against 1.1k input tokens on one real one — so all four rates (input, output,
+cache read, cache write) are applied; ignoring cache would be wrong by orders
+of magnitude. A model with no published rate reads as "no rate published" and
+is excluded from the total, which is then marked `partial` rather than passed
+off as the whole bill.
+
+Provider names come from `billing_base_url` matched against the endpoints in
+`~/.hermes/config.yaml` — read under **both** `base_url` and `api`, since the
+config uses each. Without that, 291 rows of the real store say only `custom`,
+and three different gateways hide behind that one word.
 
 ## Provider limits plugin
 

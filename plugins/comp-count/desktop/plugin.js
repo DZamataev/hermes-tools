@@ -42,6 +42,27 @@ const LOCALES = {
       prompts: n => `${n} prompts`,
       tools: n => `${n} tool calls`
     },
+    compactions: n => `${n} ${n === 1 ? 'compaction' : 'compactions'}`,
+    relative: {
+      justNow: 'just now',
+      minutes: n => `${n} ${n === 1 ? 'minute' : 'minutes'} ago`,
+      hours: n => `${n} ${n === 1 ? 'hour' : 'hours'} ago`,
+      yesterday: 'yesterday',
+      days: n => `${n} ${n === 1 ? 'day' : 'days'} ago`
+    },
+    usage: {
+      heading: 'Session total',
+      calls: n => `${n} calls`,
+      tokens: (i, o, cr, cw) => `${i} in · ${o} out · ${cr} cache read · ${cw} cache write`,
+      noRate: 'no rate published',
+      partial: 'partial',
+      explain:
+        'Each row is one working segment — a stretch of your prompts, split where you stepped away. '
+        + 'The bars are tool calls over that stretch and ▲ marks a context compaction. '
+        + 'Tokens and cost cover the whole session, not one segment. '
+        + 'Cost is list price for these tokens at current openrouter.ai rates, '
+        + 'so it estimates what the work would bill through a paid API — not what a subscription charges.'
+    },
     duration: {
       lessThanMinute: '<1m',
       minutes: m => `${m}m`,
@@ -160,10 +181,84 @@ function toolsLabel(segment) {
     .join(', ')
 }
 
+/** `7 hours ago`, `yesterday`, `4 days ago` — anchored to the segment's end.
+ *
+ *  The exact span above it answers "when", this answers "how long ago", which
+ *  is the question a reader actually has when scanning a list of segments.
+ *
+ *  Days are counted by calendar, not by dividing elapsed time: work at 22:00
+ *  last night is "yesterday" at 15:00 today, though only 17 hours passed. */
+function formatRelative(endSeconds, t, nowMs = Date.now()) {
+  const end = num(endSeconds)
+  if (end === null) {
+    return ''
+  }
+
+  const endMs = end * 1000
+  const elapsed = nowMs - endMs
+  // A negative elapsed means the clock moved, not that the segment is in the
+  // future; "-3 minutes ago" would be nonsense, so it reads as current.
+  if (elapsed < 60_000) {
+    return t('relative.justNow')
+  }
+  if (elapsed < 3_600_000) {
+    return t('relative.minutes', Math.floor(elapsed / 60_000))
+  }
+
+  const startOfDay = ms => {
+    const date = new Date(ms)
+    date.setHours(0, 0, 0, 0)
+    return date.getTime()
+  }
+  const days = Math.round((startOfDay(nowMs) - startOfDay(endMs)) / 86_400_000)
+  if (days <= 0) {
+    return t('relative.hours', Math.floor(elapsed / 3_600_000))
+  }
+  if (days === 1) {
+    return t('relative.yesterday')
+  }
+  return t('relative.days', days)
+}
+
+/** `🧳 3 compactions`. The count alone leaves the reader to guess the unit,
+ *  and the space keeps the glyph from crowding the digit. */
+function segmentCompactions(segment, t) {
+  const count = Array.isArray(segment?.compactions) ? segment.compactions.length : 0
+  return count > 0 ? `🧳 ${t('compactions', count)}` : ''
+}
+
+/** `75.6M`, `75.6k`, `892`. Cache reads run to tens of millions, and the exact
+ *  digit count of a nine-figure number tells the reader nothing. */
+function formatTokens(value) {
+  const count = num(value) ?? 0
+  if (Math.abs(count) >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1)}M`
+  }
+  if (Math.abs(count) >= 1_000) {
+    return `${(count / 1_000).toFixed(1)}k`
+  }
+  return String(Math.round(count))
+}
+
+/** `$79.25`, or `<$0.01` for a real but sub-cent cost.
+ *
+ *  A rounded "$0.00" would claim the work was free. An exact zero IS free and
+ *  says so; no rate at all returns '' and the caller words it. */
+function formatCost(value) {
+  const cost = num(value)
+  if (cost === null) {
+    return ''
+  }
+  if (cost === 0) {
+    return '$0.00'
+  }
+  return cost < 0.01 ? '<$0.01' : `$${cost.toFixed(2)}`
+}
+
 // Exported for tests; the app only consumes the default export.
 export {
-  BLOCKS, compactionLabel, formatDuration, formatSpan, list, LOCALES, markerRow,
-  num, routeLabel, sparkline, toolsLabel
+  BLOCKS, compactionLabel, formatCost, formatDuration, formatRelative, formatSpan, formatTokens,
+  list, LOCALES, markerRow, num, routeLabel, segmentCompactions, sparkline, toolsLabel
 }
 
 // The namespaced REST door, captured in `register`. Components render inside
@@ -199,6 +294,14 @@ const CSS = `
 .cc-route{font-size:.65rem;font-weight:600;color:var(--ui-text-secondary);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .cc-counts{font-size:.62rem;color:var(--ui-text-tertiary)}
 .cc-tools{font-size:.62rem;color:var(--ui-text-quaternary);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.cc-usage{display:flex;flex-direction:column;gap:3px;padding-top:6px}
+.cc-usage-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:.65rem;font-weight:600;color:var(--ui-text-secondary)}
+.cc-usage-row{display:flex;flex-direction:column;gap:0}
+.cc-usage-model{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:.62rem;color:var(--ui-text-tertiary)}
+.cc-usage-tokens{font-size:.6rem;color:var(--ui-text-quaternary);font-variant-numeric:tabular-nums}
+.cc-cost{font-variant-numeric:tabular-nums;color:var(--ui-text-secondary)}
+.cc-norate{font-size:.6rem;color:var(--ui-text-quaternary)}
+.cc-explain{font-size:.62rem;line-height:1.4;color:var(--ui-text-quaternary);padding-top:6px;border-top:1px solid var(--ui-stroke-quaternary)}
 `
 
 /** The chip's text: the live compaction count, clamped. The host can report a
@@ -213,9 +316,7 @@ function Segment({ segment, t }) {
   const counts = [
     t('counts.prompts', num(segment.prompts) ?? 0),
     t('counts.tools', num(segment.toolCalls) ?? 0),
-    (Array.isArray(segment.compactions) ? segment.compactions.length : 0) > 0
-      ? `🧳${segment.compactions.length}`
-      : ''
+    segmentCompactions(segment, t)
   ].filter(Boolean).join(' · ')
   const tools = toolsLabel(segment)
 
@@ -228,7 +329,10 @@ function Segment({ segment, t }) {
           jsx('span', { className: 'cc-span', children: formatSpan(segment.start, segment.end) }),
           jsx('span', {
             className: 'cc-dur',
-            children: formatDuration((num(segment.end) ?? 0) - (num(segment.start) ?? 0), t)
+            children: [
+              formatDuration((num(segment.end) ?? 0) - (num(segment.start) ?? 0), t),
+              formatRelative(segment.end, t)
+            ].filter(Boolean).join(' · ')
           })
         ]
       }),
@@ -241,6 +345,58 @@ function Segment({ segment, t }) {
       }),
       jsx('div', { className: 'cc-counts', children: counts }),
       tools && jsx('div', { className: 'cc-tools', title: tools, children: tools })
+    ]
+  })
+}
+
+/** Session-wide token and cost totals, per model.
+ *
+ *  Session-wide, not per segment, because `messages.token_count` is empty in
+ *  the store — there is nothing to attribute tokens to a stretch of time with.
+ *  Splitting the total by elapsed minutes would look precise and be invented. */
+function Usage({ usage, t }) {
+  const models = list(usage?.models)
+  if (models.length === 0) {
+    return null
+  }
+
+  const total = formatCost(usage?.totalCostUsd)
+  return jsxs('div', {
+    className: 'cc-usage',
+    children: [
+      jsxs('div', {
+        className: 'cc-usage-head',
+        children: [
+          jsx('span', { children: t('usage.heading') }),
+          total && jsx('span', {
+            className: 'cc-cost',
+            // A total that skipped unpriced models is not the session's cost;
+            // saying "partial" is the difference between an estimate and a lie.
+            children: usage?.costComplete === false ? `~${total} (${t('usage.partial')})` : `~${total}`
+          })
+        ]
+      }),
+      ...models.map((model, index) => jsxs('div', {
+        className: 'cc-usage-row',
+        children: [
+          jsxs('div', {
+            className: 'cc-usage-model',
+            children: [
+              jsx('span', { children: [model.model, model.provider].filter(Boolean).join(' · ') }),
+              jsx('span', {
+                className: model.costUsd === null ? 'cc-norate' : 'cc-cost',
+                children: model.costUsd === null ? t('usage.noRate') : formatCost(model.costUsd)
+              })
+            ]
+          }),
+          jsx('div', {
+            className: 'cc-usage-tokens',
+            children: `${t('usage.calls', num(model.calls) ?? 0)} · `
+              + t('usage.tokens', formatTokens(model.inp), formatTokens(model.out),
+                  formatTokens(model.cacheRead), formatTokens(model.cacheWrite))
+          })
+        ]
+      }, `${model.model}-${index}`))
     ]
   })
 }
@@ -280,7 +436,13 @@ function Panel({ sessionId, profile }) {
         className: 'cc-sub',
         children: t('noSegments')
       }),
-      ...segments.map((segment, index) => jsx(Segment, { segment, t }, `${segment.start}-${index}`))
+      ...segments.map((segment, index) => jsx(Segment, { segment, t }, `${segment.start}-${index}`)),
+      sessionId && !error && jsx(Usage, { usage: data?.usage, t }),
+      // The explainer sits last, below the data it describes: a reader who
+      // already understands the panel never has to scroll past it.
+      sessionId && !error && segments.length > 0 && jsx('div', {
+        className: 'cc-explain', children: t('usage.explain')
+      })
     ]
   })
 }

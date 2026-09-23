@@ -32,8 +32,13 @@ CREATE TABLE session_model_usage (
     session_id TEXT NOT NULL,
     model TEXT NOT NULL,
     billing_provider TEXT NOT NULL DEFAULT '',
+    billing_base_url TEXT NOT NULL DEFAULT '',
     task TEXT NOT NULL DEFAULT '',
     api_call_count INTEGER NOT NULL DEFAULT 0,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
     first_seen REAL,
     last_seen REAL
 );
@@ -57,8 +62,12 @@ def msg(conn, session_id, ts, role="user", *, content="hi", tool_name=None,
         (session_id, role, content, tool_name, ts, display_kind, summary, active, compacted))
 
 
-def route(conn, session_id, model, provider, first_seen, last_seen, *, task="", calls=1) -> None:
+def route(conn, session_id, model, provider, first_seen, last_seen, *, task="", calls=1,
+          base_url="", inp=0, out=0, cache_read=0, cache_write=0) -> None:
     conn.execute(
-        "INSERT INTO session_model_usage (session_id, model, billing_provider, task,"
-        " api_call_count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (session_id, model, provider, task, calls, first_seen, last_seen))
+        "INSERT INTO session_model_usage (session_id, model, billing_provider, billing_base_url,"
+        " task, api_call_count, input_tokens, output_tokens, cache_read_tokens,"
+        " cache_write_tokens, first_seen, last_seen)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (session_id, model, provider, base_url, task, calls, inp, out, cache_read,
+         cache_write, first_seen, last_seen))

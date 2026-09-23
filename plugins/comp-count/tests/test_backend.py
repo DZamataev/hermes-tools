@@ -35,14 +35,14 @@ def check(name: str, condition: bool, detail: str = "") -> None:
         failures.append(f"{name}{f' — {detail}' if detail else ''}")
 
 
-def store(fn):
+def store(fn, gateways=None):
     """Build a fixture db, run fn(conn, sid), return build_timeline's output."""
     path = tempfile.mktemp(suffix=".db")
     conn = fx.build(path)
     fn(conn, "s1")
     conn.commit()
     conn.close()
-    return cc.build_timeline(path, "s1")
+    return cc.build_timeline(path, "s1", gateways or {})
 
 
 H = 3600.0
@@ -247,6 +247,220 @@ conn.commit()
 conn.close()
 missing = cc.build_timeline(path, "does-not-exist")
 check("unknown-session-is-empty-not-an-error", missing["segments"] == [])
+
+# --- provider naming --------------------------------------------------------
+
+# billing_provider is 'custom' for 291 of the real store's rows, which tells the
+# operator nothing: three different gateways all report it. billing_base_url
+# does distinguish them, and the mapping comes from the user's own config.yaml
+# rather than a table baked in here, because the hosts are theirs to change.
+GATEWAYS = {
+    "teamclaude": "https://teamclaude.larid.dedyn.io:3443",
+    "codex-lb": "https://codexlb.larid.dedyn.io:2499/backend-api/codex",
+    "codex-lb-oneclick": "https://codex-lb.dev.looky.team/backend-api/codex",
+}
+
+check("provider-from-base-url",
+      cc.provider_name("custom", "https://teamclaude.larid.dedyn.io:3443", GATEWAYS) == "teamclaude",
+      cc.provider_name("custom", "https://teamclaude.larid.dedyn.io:3443", GATEWAYS))
+
+# A trailing slash and a deeper path are the same gateway. The real store holds
+# both '/backend-api/codex' and '/backend-api/codex/' for one provider.
+check("provider-ignores-trailing-slash",
+      cc.provider_name("custom", "https://codex-lb.dev.looky.team/backend-api/codex/", GATEWAYS)
+      == "codex-lb-oneclick")
+
+# Hermes writes the provider as 'custom:<name>' in some rows and bare in others.
+check("provider-strips-custom-prefix",
+      cc.provider_name("custom:codex-lb-oneclick", "", GATEWAYS) == "codex-lb-oneclick")
+
+# An already-specific name is kept as-is; nothing to improve.
+check("provider-keeps-specific-name",
+      cc.provider_name("anthropic", "", GATEWAYS) == "anthropic")
+
+# Unknown host and a generic name: say unknown rather than invent one.
+check("provider-unknown-stays-unknown",
+      cc.provider_name("custom", "https://example.invalid/v1", GATEWAYS) == "custom")
+
+# --- upstream vendor --------------------------------------------------------
+
+# A gateway does not have its own price list; the vendor it proxies does.
+check("vendor-teamclaude-is-anthropic",
+      cc.upstream_vendor("teamclaude", "https://teamclaude.larid.dedyn.io:3443") == "anthropic")
+check("vendor-codex-is-openai",
+      cc.upstream_vendor("codex-lb", "https://codexlb.larid.dedyn.io:2499/backend-api/codex") == "openai")
+check("vendor-passes-through-known-vendor",
+      cc.upstream_vendor("anthropic", "") == "anthropic")
+
+# --- cost -------------------------------------------------------------------
+
+RATES = {
+    "anthropic/claude-opus-5": {"in": 5.0, "out": 25.0, "cacheRead": 0.5, "cacheWrite": 6.25},
+}
+
+# Cache reads dominate a long session (82M against 1.1k input tokens on the real
+# one), so a cost that ignores them is wrong by orders of magnitude.
+cost = cc.estimate_cost("claude-opus-5", "anthropic",
+                        {"inp": 1_000_000, "out": 1_000_000,
+                         "cacheRead": 1_000_000, "cacheWrite": 1_000_000}, RATES)
+check("cost-sums-all-four-rates", cost == 5.0 + 25.0 + 0.5 + 6.25, str(cost))
+
+check("cost-scales-per-million",
+      cc.estimate_cost("claude-opus-5", "anthropic",
+                       {"inp": 500_000, "out": 0, "cacheRead": 0, "cacheWrite": 0}, RATES) == 2.5)
+
+# No rate must read as "unknown", never as zero: a $0 line claims the work was
+# free, which is a different and false statement.
+check("cost-unknown-model-is-none",
+      cc.estimate_cost("glm-4.6v-flash", "zai",
+                       {"inp": 1_000_000, "out": 0, "cacheRead": 0, "cacheWrite": 0}, RATES) is None)
+
+# --- usage payload ----------------------------------------------------------
+
+
+def usage_store(fn):
+    path = tempfile.mktemp(suffix=".db")
+    conn = fx.build(path)
+    fn(conn, "s1")
+    conn.commit()
+    conn.close()
+    return cc.build_usage(path, "s1", GATEWAYS, RATES)
+
+
+def two_models(conn, sid):
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 600, calls=10,
+             base_url=GATEWAYS["teamclaude"], inp=1_000_000, out=1_000_000,
+             cache_read=1_000_000, cache_write=1_000_000)
+    fx.route(conn, sid, "glm-4.6v-flash", "zai", T0, T0 + 600, calls=3,
+             base_url="https://open.bigmodel.cn/api/paas/v4/", inp=500, out=200)
+
+
+usage = usage_store(two_models)
+models = {m["model"]: m for m in usage["models"]}
+
+check("usage-lists-every-model", set(models) == {"claude-opus-5", "glm-4.6v-flash"}, str(set(models)))
+check("usage-resolves-provider", models["claude-opus-5"]["provider"] == "teamclaude",
+      models["claude-opus-5"]["provider"])
+check("usage-carries-calls", models["claude-opus-5"]["calls"] == 10)
+check("usage-priced-model-has-cost", models["claude-opus-5"]["costUsd"] == 5.0 + 25.0 + 0.5 + 6.25,
+      str(models["claude-opus-5"]["costUsd"]))
+check("usage-unpriced-model-has-no-cost", models["glm-4.6v-flash"]["costUsd"] is None)
+
+# The total may only sum what was actually priced, and must say so — otherwise
+# a session that is half unpriced reads as if the total covered all of it.
+check("total-sums-priced-only", usage["totalCostUsd"] == 5.0 + 25.0 + 0.5 + 6.25,
+      str(usage["totalCostUsd"]))
+check("total-flags-partial-coverage", usage["costComplete"] is False)
+
+
+def one_priced_model(conn, sid):
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 600, calls=2,
+             base_url=GATEWAYS["teamclaude"], inp=1_000_000, out=0)
+
+
+check("total-complete-when-every-model-priced",
+      usage_store(one_priced_model)["costComplete"] is True)
+
+# The ROUTE line under each segment names the provider too, and 'custom' is as
+# useless there as in the totals — the operator sees it on every segment.
+route_out = store(lambda conn, sid: (
+    fx.msg(conn, sid, T0, role="user"),
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 600,
+             base_url="https://teamclaude.larid.dedyn.io:3443"),
+), gateways=GATEWAYS)
+check("segment-route-resolves-provider",
+      route_out["segments"][0]["routes"][0]["provider"] == "teamclaude",
+      str(route_out["segments"][0]["routes"]))
+
+# The endpoint is internal infrastructure — the panel shows a provider name,
+# never a host and port. It must not ride along in the payload.
+check("segment-route-hides-base-url",
+      "base_url" not in route_out["segments"][0]["routes"][0],
+      str(route_out["segments"][0]["routes"][0]))
+
+# Auxiliary work (titles, compression, background review) runs on models the
+# operator never chose, but it IS billed — so usage counts it even though the
+# route list ignores it.
+def aux_only(conn, sid):
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 60, calls=1, task="title_generation",
+             base_url=GATEWAYS["teamclaude"], inp=1_000_000, out=0)
+
+
+aux = usage_store(aux_only)
+check("usage-counts-auxiliary-tasks", len(aux["models"]) == 1 and aux["models"][0]["calls"] == 1,
+      str(aux["models"]))
+
+
+# Grouping happens on the RESOLVED provider, not the raw row. The real store
+# writes one gateway under several spellings — 'custom' with a URL, and
+# 'custom:codex-lb-oneclick' with none — and grouping before resolution split
+# one model into two identical-looking rows in the panel.
+def same_gateway_spelled_twice(conn, sid):
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 60, calls=4,
+             base_url=GATEWAYS["teamclaude"], inp=1_000_000, out=0)
+    fx.route(conn, sid, "claude-opus-5", "custom:teamclaude", T0, T0 + 60, calls=6,
+             base_url="", inp=1_000_000, out=0)
+
+
+merged = usage_store(same_gateway_spelled_twice)
+check("usage-merges-one-provider-into-one-row", len(merged["models"]) == 1, str(merged["models"]))
+check("usage-merges-sums-calls", merged["models"][0]["calls"] == 10, str(merged["models"]))
+check("usage-merges-sums-tokens", merged["models"][0]["inp"] == 2_000_000, str(merged["models"]))
+check("usage-merges-sums-cost", merged["models"][0]["costUsd"] == 10.0, str(merged["models"]))
+
+# --- rate parsing -----------------------------------------------------------
+
+# Shape copied from a live openrouter.ai/api/v1/models response.
+PAYLOAD = {"data": [
+    {"id": "anthropic/claude-opus-5", "pricing": {
+        "prompt": "0.000005", "completion": "0.000025",
+        "input_cache_read": "0.0000005", "input_cache_write": "0.00000625"}},
+    {"id": "~anthropic/claude-opus-latest", "pricing": {"prompt": "0.000005"}},
+    {"id": "z-ai/glm-5.3-flash", "pricing": {
+        "prompt": "0", "completion": "0", "input_cache_read": None}},
+]}
+
+parsed = cc.parse_rates(PAYLOAD)
+
+# OpenRouter quotes dollars per single token; the panel works per million.
+check("rates-scale-to-per-million", parsed["anthropic/claude-opus-5"]["in"] == 5.0,
+      str(parsed["anthropic/claude-opus-5"]))
+check("rates-read-cache-fields", parsed["anthropic/claude-opus-5"]["cacheRead"] == 0.5)
+check("rates-read-cache-write", parsed["anthropic/claude-opus-5"]["cacheWrite"] == 6.25)
+
+# '~vendor/model' is an alias for whatever is current; stored usage always
+# names a concrete model, so keeping the alias would only risk a wrong match.
+check("rates-skip-latest-aliases", "~anthropic/claude-opus-latest" not in parsed, str(list(parsed)))
+
+# A missing cache field is 0, not a crash — many models publish no cache price.
+check("rates-absent-field-is-zero", parsed["z-ai/glm-5.3-flash"]["cacheRead"] == 0.0)
+
+# A free model is priced, not unpriced: "$0.00" is true, "no rate" is not.
+check("rates-free-model-is-priced",
+      cc.estimate_cost("glm-5.3-flash", "z-ai",
+                       {"inp": 1_000_000, "out": 0, "cacheRead": 0, "cacheWrite": 0},
+                       parsed) == 0.0)
+
+check("rates-empty-payload-is-empty", cc.parse_rates({}) == {})
+
+# --- provider config shapes -------------------------------------------------
+
+# Hermes accepts the endpoint under either key, and the real config.yaml uses
+# both: 'base_url' for the codex gateways, 'api' for teamclaude. Reading only
+# one of them silently drops a provider and leaves its rows labelled 'custom'.
+CONFIG = {"providers": {
+    "teamclaude": {"api": "https://teamclaude.larid.dedyn.io:3443"},
+    "codex-lb": {"base_url": "https://codexlb.larid.dedyn.io:2499/backend-api/codex"},
+    "no-endpoint": {"model": "x"},
+}}
+
+parsed_gateways = cc.gateways_from_config(CONFIG)
+check("config-reads-api-key", parsed_gateways.get("teamclaude") == "https://teamclaude.larid.dedyn.io:3443",
+      str(parsed_gateways))
+check("config-reads-base-url-key",
+      parsed_gateways.get("codex-lb") == "https://codexlb.larid.dedyn.io:2499/backend-api/codex")
+check("config-skips-endpointless-provider", "no-endpoint" not in parsed_gateways, str(parsed_gateways))
+check("config-guards-empty", cc.gateways_from_config({}) == {})
 
 # --- report -----------------------------------------------------------------
 

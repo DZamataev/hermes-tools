@@ -58,7 +58,8 @@ shutil.copy(PLUGIN, root / "plugin.js")
 globalThis.document ??= { createElement: () => ({ remove() {} }), head: { append() {} } }
 
 import plugin, {
-  BLOCKS, formatDuration, formatSpan, list, LOCALES, markerRow, routeLabel, sparkline, toolsLabel
+  BLOCKS, formatCost, formatDuration, formatRelative, formatSpan, formatTokens, list, LOCALES,
+  markerRow, routeLabel, segmentCompactions, sparkline, toolsLabel
 } from './plugin.js'
 
 const failures = []
@@ -204,6 +205,74 @@ check('chip-clamps-negative', compactionLabel({ compressions: -4 }) === '🧳 0'
 check('chip-clamps-garbage', compactionLabel({ compressions: 'nonsense' }) === '🧳 0')
 check('chip-clamps-null', compactionLabel(null) === '🧳 0')
 check('chip-clamps-missing', compactionLabel({}) === '🧳 0')
+
+// --- relative time ----------------------------------------------------------
+
+// Anchored to the segment's end: "yesterday" answers "when did I last touch
+// this", which is what the exact span above it does not say at a glance.
+// Segment timestamps are seconds, like every other field the backend sends.
+// Fixtures are built in LOCAL time because "yesterday" is a local-calendar
+// claim — under UTC a 22:00 timestamp is already today in Moscow.
+const local = (y, m, d, h, min = 0) => new Date(y, m, d, h, min, 0).getTime()
+const NOW = local(2026, 8, 23, 15)
+const rel = (ms, now = NOW) => formatRelative(ms / 1000, en, now)
+
+check('relative-minutes', rel(NOW - 7 * 60 * 1000) === '7 minutes ago', rel(NOW - 7 * 60 * 1000))
+check('relative-one-minute', rel(NOW - 60 * 1000) === '1 minute ago', rel(NOW - 60 * 1000))
+check('relative-hours', rel(NOW - 7 * 3600 * 1000) === '7 hours ago', rel(NOW - 7 * 3600 * 1000))
+check('relative-one-hour', rel(NOW - 3600 * 1000) === '1 hour ago', rel(NOW - 3600 * 1000))
+
+// Under a minute must not render "0 minutes ago", which reads as a stale zero
+// rather than as "just now".
+check('relative-seconds', rel(NOW - 20 * 1000) === 'just now', rel(NOW - 20 * 1000))
+
+// Calendar-relative, not 24-hour arithmetic: work at 22:00 last night is
+// "yesterday" at 15:00 today even though that is only 17 hours.
+check('relative-yesterday', rel(local(2026, 8, 22, 22)) === 'yesterday',
+      rel(local(2026, 8, 22, 22)))
+
+// ...and 23:30 today is "today" at 00:30 tomorrow only by calendar, so the
+// same-day case must not leak into it.
+check('relative-today', rel(local(2026, 8, 23, 2)) === '13 hours ago',
+      rel(local(2026, 8, 23, 2)))
+
+check('relative-days', rel(local(2026, 8, 19, 12)) === '4 days ago',
+      rel(local(2026, 8, 19, 12)))
+
+// A future timestamp comes from a clock skew, not from the future; it must not
+// render "-3 minutes ago".
+check('relative-future-is-just-now', rel(NOW + 5 * 60 * 1000) === 'just now',
+      rel(NOW + 5 * 60 * 1000))
+check('relative-guards-garbage', formatRelative(null, en, NOW) === '')
+
+// --- compaction wording -----------------------------------------------------
+
+// "3" alone next to a suitcase forces the reader to guess the unit.
+check('segment-compactions-plural', segmentCompactions({ compactions: [1, 2, 3] }, en) === '🧳 3 compactions',
+      segmentCompactions({ compactions: [1, 2, 3] }, en))
+check('segment-compactions-singular', segmentCompactions({ compactions: [1] }, en) === '🧳 1 compaction',
+      segmentCompactions({ compactions: [1] }, en))
+check('segment-compactions-none', segmentCompactions({ compactions: [] }, en) === '')
+check('segment-compactions-garbage', segmentCompactions({}, en) === '')
+
+// --- token and cost formatting ----------------------------------------------
+
+check('tokens-thousands', formatTokens(75_586) === '75.6k', formatTokens(75_586))
+check('tokens-millions', formatTokens(75_586_893) === '75.6M', formatTokens(75_586_893))
+check('tokens-small-exact', formatTokens(892) === '892', formatTokens(892))
+check('tokens-zero', formatTokens(0) === '0')
+check('tokens-guards-garbage', formatTokens(null) === '0')
+
+check('cost-two-decimals', formatCost(79.2537) === '$79.25', formatCost(79.2537))
+
+// A real cost below a cent must not print "$0.00" and read as free.
+check('cost-sub-cent', formatCost(0.004) === '<$0.01', formatCost(0.004))
+
+// An exact zero IS free, and says so.
+check('cost-zero-is-zero', formatCost(0) === '$0.00', formatCost(0))
+
+// No rate is not a number at all; the caller decides the wording.
+check('cost-null-is-empty', formatCost(null) === '')
 
 console.log(`  ${checks - failures.length}/${checks} checks passed`)
 for (const failure of failures) console.log(`  ✗ ${failure}`)
