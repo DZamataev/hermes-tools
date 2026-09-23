@@ -11,3 +11,7 @@ runner/runner.log
 bridge-service/data/
 bridge-service/.venv/
 bridge-service/__pycache__/
+
+# Python bytecode; the setup script already skips it when installing.
+__pycache__/
+*.pyc
