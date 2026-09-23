@@ -11,7 +11,8 @@ plugins installed.
 - `plugins/comp-count/` — unified plugin (Python backend + desktop UI) showing
   the focused session's working timeline: models, providers, segments and
   compactions, plus session-wide token use and estimated API cost, behind the
-  status-bar 🧳 chip.
+  status-bar 🧳 chip. The chip and the panel share one query, so the count on
+  the chip is the count in the panel.
 - `plugins/provider-limits/` — unified plugin (Python backend + desktop UI)
   showing each custom provider's 5-hour quota in the status bar.
 - `setup_hermes_tools.sh` — installs both plugins as unified packages under
@@ -93,7 +94,15 @@ off as the whole bill.
 Provider names come from `billing_base_url` matched against the endpoints in
 `~/.hermes/config.yaml` — read under **both** `base_url` and `api`, since the
 config uses each. Without that, 291 rows of the real store say only `custom`,
-and three different gateways hide behind that one word.
+and three different gateways hide behind that one word. A row carrying neither
+field (real sessions have them — a `vision` call) shows no provider at all
+rather than a made-up one, and is still priced from the model's own vendor.
+
+Model names are normalised before the rate lookup: the store writes
+`claude-opus-5-5` where OpenRouter publishes `claude-opus-5.5`, and a dated
+snapshot (`claude-haiku-4-5-20251001`) prices as its base model. This rewrites
+spelling only — it never walks to a neighbouring version. An unpublished 5.5
+stays unpriced instead of quietly billing at 5's higher rate.
 
 ## Provider limits plugin
 

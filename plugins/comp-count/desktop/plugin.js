@@ -257,8 +257,8 @@ function formatCost(value) {
 
 // Exported for tests; the app only consumes the default export.
 export {
-  BLOCKS, compactionLabel, formatCost, formatDuration, formatRelative, formatSpan, formatTokens,
-  list, LOCALES, markerRow, num, routeLabel, segmentCompactions, sparkline, toolsLabel
+  BLOCKS, chipCount, compactionLabel, formatCost, formatDuration, formatRelative, formatSpan,
+  formatTokens, list, LOCALES, markerRow, num, routeLabel, segmentCompactions, sparkline, toolsLabel
 }
 
 // The namespaced REST door, captured in `register`. Components render inside
@@ -304,11 +304,31 @@ const CSS = `
 .cc-explain{font-size:.62rem;line-height:1.4;color:var(--ui-text-quaternary);padding-top:6px;border-top:1px solid var(--ui-stroke-quaternary)}
 `
 
-/** The chip's text: the live compaction count, clamped. The host can report a
- *  count before session state settles, and "🧳 NaN" or a negative count in the
- *  status bar is worse than showing zero. */
-function compactionLabel(usage) {
-  return `🧳 ${Math.max(0, Math.trunc(Number(usage?.compressions) || 0))}`
+/** Compactions across the whole session, counted from the timeline payload.
+ *
+ *  The chip used to read `host.state.focusedUsage.compressions`, which does not
+ *  exist: UsageStats declares no such field, and the backend counter behind it
+ *  (`compression_count`) lives only in process memory — it is set to 0 when the
+ *  compressor is constructed and never persisted, unlike its neighbour
+ *  `_ineffective_compression_count`. A session resumed after a restart
+ *  therefore showed 0 on the chip while the panel, which counts the store,
+ *  listed several.
+ *
+ *  null means "not loaded yet", which is not the same claim as zero. */
+function chipCount(timeline) {
+  if (!timeline || !Array.isArray(timeline.segments)) {
+    return null
+  }
+  return list(timeline.segments)
+    .reduce((total, segment) =>
+      total + (Array.isArray(segment.compactions) ? segment.compactions.length : 0), 0)
+}
+
+/** The chip's text. An em dash while the count is still loading: the status bar
+ *  must not assert "0 compactions" for a session that may have many. */
+function compactionLabel(count) {
+  const value = num(count)
+  return value === null ? '🧳 —' : `🧳 ${Math.max(0, Math.trunc(value))}`
 }
 
 function Segment({ segment, t }) {
@@ -401,9 +421,15 @@ function Usage({ usage, t }) {
   })
 }
 
-function Panel({ sessionId, profile }) {
-  const t = usePluginI18n(ID)
-  const { data, error } = useQuery({
+/** The timeline query, shared by the chip and the panel.
+ *
+ *  One query key means one fetch and one cache: the chip's count and the
+ *  panel's rows are then the same numbers by construction, not by two code
+ *  paths agreeing. That identity is the fix for the chip reading 0 while the
+ *  panel showed several.
+ */
+function useTimeline(sessionId, profile) {
+  return useQuery({
     queryKey: [ID, 'timeline', sessionId, profile],
     queryFn: () => rest(`/timeline?session=${encodeURIComponent(sessionId)}`
       + `&profile=${encodeURIComponent(profile)}`),
@@ -412,6 +438,11 @@ function Panel({ sessionId, profile }) {
     staleTime: REFETCH_MS,
     retry: false
   })
+}
+
+function Panel({ sessionId, profile }) {
+  const t = usePluginI18n(ID)
+  const { data, error } = useTimeline(sessionId, profile)
   const segments = list(data?.segments)
 
   return jsxs('div', {
@@ -449,13 +480,15 @@ function Panel({ sessionId, profile }) {
 
 function Chip() {
   const t = usePluginI18n(ID)
-  const usage = useValue(host.state.focusedUsage)
   // The STORED id, never focusedSessionId: runtime ids do not survive a reload
   // and do not key state.db, which is what the backend reads.
   const sessionId = useValue(host.state.focusedStoredSessionId) || ''
   const profile = useValue(host.state.focusedSessionProfile) || 'default'
-  const label = compactionLabel(usage)
-  const title = t('chipTitle', label.replace('🧳 ', ''))
+  // Same query as the panel, so both show one number rather than two.
+  const { data } = useTimeline(sessionId, profile)
+  const count = chipCount(data)
+  const label = compactionLabel(count)
+  const title = t('chipTitle', count === null ? '—' : String(count))
 
   return jsxs(Popover, {
     children: [

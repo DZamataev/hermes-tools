@@ -58,8 +58,8 @@ shutil.copy(PLUGIN, root / "plugin.js")
 globalThis.document ??= { createElement: () => ({ remove() {} }), head: { append() {} } }
 
 import plugin, {
-  BLOCKS, formatCost, formatDuration, formatRelative, formatSpan, formatTokens, list, LOCALES,
-  markerRow, routeLabel, segmentCompactions, sparkline, toolsLabel
+  BLOCKS, chipCount, compactionLabel, formatCost, formatDuration, formatRelative, formatSpan,
+  formatTokens, list, LOCALES, markerRow, routeLabel, segmentCompactions, sparkline, toolsLabel
 } from './plugin.js'
 
 const failures = []
@@ -196,15 +196,32 @@ const contribution = renderChip()
 check('chip-area', contribution.area === 'statusBar.right', contribution.area)
 check('chip-renders', typeof contribution.render === 'function')
 
-// The chip must never regress: whatever the backend does, it keeps printing the
-// live compaction count with the clamp it always had.
-const { compactionLabel } = plugin
-check('chip-count', compactionLabel({ compressions: 3 }) === '🧳 3', compactionLabel({ compressions: 3 }))
-check('chip-clamps-float', compactionLabel({ compressions: 2.9 }) === '🧳 2')
-check('chip-clamps-negative', compactionLabel({ compressions: -4 }) === '🧳 0')
-check('chip-clamps-garbage', compactionLabel({ compressions: 'nonsense' }) === '🧳 0')
-check('chip-clamps-null', compactionLabel(null) === '🧳 0')
-check('chip-clamps-missing', compactionLabel({}) === '🧳 0')
+// The chip counts compactions from the SAME payload the panel renders.
+// host.state.focusedUsage has no compaction field at all (UsageStats declares
+// none), and the backend's `compression_count` lives only in process memory —
+// agent/context_compressor.py sets it to 0 on construction and never persists
+// it, unlike its neighbour _ineffective_compression_count. So after any restart
+// the chip read 0 while the panel, counting the store, showed several.
+const timeline = {
+  segments: [
+    { start: 1000, end: 2000, compactions: [1100, 1500] },
+    { start: 3000, end: 4000, compactions: [3200] }
+  ]
+}
+check('chip-counts-across-segments', chipCount(timeline) === 3, String(chipCount(timeline)))
+check('chip-counts-zero-when-none',
+      chipCount({ segments: [{ start: 1, end: 2, compactions: [] }] }) === 0)
+
+// Not-yet-loaded is not "zero compactions": the chip must not assert a count
+// it does not have.
+check('chip-count-null-before-data', chipCount(null) === null, String(chipCount(null)))
+check('chip-count-guards-garbage', chipCount({ segments: 'nonsense' }) === null)
+check('chip-count-guards-bad-segment', chipCount({ segments: [null, 7] }) === 0)
+
+check('chip-label', compactionLabel(3) === '🧳 3', compactionLabel(3))
+check('chip-label-clamps-float', compactionLabel(2.9) === '🧳 2')
+check('chip-label-clamps-negative', compactionLabel(-4) === '🧳 0')
+check('chip-label-while-loading', compactionLabel(null) === '🧳 —', compactionLabel(null))
 
 // --- relative time ----------------------------------------------------------
 

@@ -278,9 +278,15 @@ check("provider-strips-custom-prefix",
 check("provider-keeps-specific-name",
       cc.provider_name("anthropic", "", GATEWAYS) == "anthropic")
 
-# Unknown host and a generic name: say unknown rather than invent one.
-check("provider-unknown-stays-unknown",
+# Unknown host and a generic name: keep the generic name rather than invent one.
+check("provider-unknown-keeps-generic-name",
       cc.provider_name("custom", "https://example.invalid/v1", GATEWAYS) == "custom")
+
+# Nothing at all to go on: empty, not a literal "unknown" masquerading as a
+# provider name in a list beside the real ones.
+check("provider-empty-when-nothing-identifies-it",
+      cc.provider_name("", "", GATEWAYS) == "",
+      repr(cc.provider_name("", "", GATEWAYS)))
 
 # --- upstream vendor --------------------------------------------------------
 
@@ -461,6 +467,78 @@ check("config-reads-base-url-key",
       parsed_gateways.get("codex-lb") == "https://codexlb.larid.dedyn.io:2499/backend-api/codex")
 check("config-skips-endpointless-provider", "no-endpoint" not in parsed_gateways, str(parsed_gateways))
 check("config-guards-empty", cc.gateways_from_config({}) == {})
+
+# --- model name normalisation -----------------------------------------------
+
+# Hermes and OpenRouter spell the same model differently, and a literal
+# comparison silently prices nothing: the store says 'claude-opus-5-5' where
+# the rate list publishes 'claude-opus-5.5'. That looked like a missing rate
+# until the two lists were compared side by side.
+NAMED = {
+    "anthropic/claude-opus-5": {"in": 5.0, "out": 25.0, "cacheRead": 0.5, "cacheWrite": 6.25},
+    "anthropic/claude-opus-5.5": {"in": 4.0, "out": 20.0, "cacheRead": 0.2, "cacheWrite": 5.0},
+    "anthropic/claude-haiku-4.5": {"in": 1.0, "out": 5.0, "cacheRead": 0.1, "cacheWrite": 1.25},
+}
+
+million = {"inp": 1_000_000, "out": 0, "cacheRead": 0, "cacheWrite": 0}
+
+check("name-dashed-version-matches-dotted",
+      cc.estimate_cost("claude-opus-5-5", "anthropic", million, NAMED) == 4.0,
+      str(cc.estimate_cost("claude-opus-5-5", "anthropic", million, NAMED)))
+
+# 5.5 must price as 5.5, never fall back to 5 — the rates differ ($4 vs $5) and
+# a silent substitution reports a wrong number as if it were exact.
+check("name-does-not-fall-back-to-older-version",
+      cc.estimate_cost("claude-opus-5-5", "anthropic", million, NAMED) != 5.0)
+
+# The real danger is the case where the exact rate is ABSENT: rewriting must
+# not then walk down to the previous version. With 5.5 unpublished, a 5.5 row
+# stays unpriced rather than quietly billing at 5's higher rate.
+OLDER_ONLY = {"anthropic/claude-opus-5": NAMED["anthropic/claude-opus-5"]}
+check("name-missing-version-does-not-borrow-older-rate",
+      cc.estimate_cost("claude-opus-5-5", "anthropic", million, OLDER_ONLY) is None,
+      str(cc.estimate_cost("claude-opus-5-5", "anthropic", million, OLDER_ONLY)))
+
+# An exact name still wins over any rewriting.
+check("name-exact-match-preferred",
+      cc.estimate_cost("claude-opus-5", "anthropic", million, NAMED) == 5.0)
+
+# A dated snapshot bills at its base model's rate.
+check("name-dated-snapshot-uses-base",
+      cc.estimate_cost("claude-haiku-4-5-20251001", "anthropic", million, NAMED) == 1.0,
+      str(cc.estimate_cost("claude-haiku-4-5-20251001", "anthropic", million, NAMED)))
+
+# Rewriting must not invent a match: an unknown model stays unpriced rather
+# than being bent into the nearest published name.
+check("name-unknown-still-unpriced",
+      cc.estimate_cost("glm-4.6v-flash", "z-ai", million, NAMED) is None)
+check("name-near-miss-not-forced",
+      cc.estimate_cost("claude-opus-9-9", "anthropic", million, NAMED) is None)
+
+# --- rows with no provider at all -------------------------------------------
+
+# A real session carries a 'vision' row with an empty provider AND empty URL:
+# nothing to resolve it from. It must not read as a provider literally called
+# "unknown" beside the real ones, and it must not silently vanish either —
+# those calls happened and are billed.
+def unattributed_row(conn, sid):
+    fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 600, calls=10,
+             base_url=GATEWAYS["teamclaude"], inp=1_000_000, out=0)
+    fx.route(conn, sid, "claude-opus-5", "", T0, T0 + 60, calls=1, task="vision",
+             base_url="", inp=1000, out=10)
+
+
+orphan = usage_store(unattributed_row)
+providers = [m["provider"] for m in orphan["models"]]
+check("unattributed-row-is-not-a-provider-named-unknown", "unknown" not in providers, str(providers))
+
+# The vendor is still derivable from the model name, so the row stays priced
+# and the session total stays complete.
+check("unattributed-row-still-priced",
+      all(m["costUsd"] is not None for m in orphan["models"]), str(orphan["models"]))
+check("unattributed-row-keeps-total-complete", orphan["costComplete"] is True)
+check("unattributed-row-counts-its-calls",
+      sum(m["calls"] for m in orphan["models"]) == 11, str(orphan["models"]))
 
 # --- report -----------------------------------------------------------------
 

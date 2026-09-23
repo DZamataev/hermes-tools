@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from collections import Counter
@@ -229,12 +230,16 @@ def _url_key(url: str) -> str:
 
 
 def provider_name(billing_provider: str, base_url: str, gateways: Dict[str, str]) -> str:
-    """The provider the operator would recognise.
+    """The provider the operator would recognise, or '' when nothing identifies it.
 
     ``billing_provider`` alone is not enough: 291 rows of the real store say
     'custom', and three different gateways are hiding behind that one word. The
     base URL does separate them, matched against the user's own configured
     providers.
+
+    Returns '' rather than a literal "unknown" when the row carries neither —
+    real sessions hold such rows (a 'vision' call with both fields empty), and
+    a made-up provider name sitting beside the real ones reads as a real route.
     """
     raw = (billing_provider or "").strip()
     # Hermes writes both 'custom:codex-lb' and a bare 'codex-lb'.
@@ -248,10 +253,16 @@ def provider_name(billing_provider: str, base_url: str, gateways: Dict[str, str]
         for name, url in (gateways or {}).items():
             if _url_key(url) == key:
                 return name
-    return raw or "unknown"
+    return raw
 
 
-def upstream_vendor(provider: str, base_url: str) -> str:
+# Which vendor publishes the rates for a model, by name. Used only when the row
+# carries no provider at all: the model name still says who serves it.
+_MODEL_VENDORS = (("claude-", "anthropic"), ("gpt-", "openai"), ("o1", "openai"),
+                  ("gemini-", "google"), ("glm-", "z-ai"), ("deepseek", "deepseek"))
+
+
+def upstream_vendor(provider: str, base_url: str, model: str = "") -> str:
     """The vendor whose published rates apply to this request.
 
     Pricing follows the vendor that actually serves the tokens, so a gateway
@@ -266,10 +277,43 @@ def upstream_vendor(provider: str, base_url: str) -> str:
     for gateway, vendor in _GATEWAY_VENDORS.items():
         if gateway in key:
             return vendor
-    return name or "unknown"
+    # Nothing identifies the route, but the model name still does: an
+    # unattributed 'claude-*' row is billed at Anthropic's published rates
+    # whichever gateway happened to carry it.
+    lowered = (model or "").strip().lower()
+    for prefix, vendor in _MODEL_VENDORS:
+        if lowered.startswith(prefix):
+            return vendor
+    return name
 
 
 # --- cost -------------------------------------------------------------------
+
+
+def _rate_candidates(model: str) -> List[str]:
+    """Spellings to try for one model, most specific first.
+
+    Hermes and OpenRouter name the same model differently, and comparing the
+    strings literally prices nothing: the store writes 'claude-opus-5-5' where
+    the rate list publishes 'claude-opus-5.5'.
+
+    Every candidate is still an exact lookup — this rewrites spelling, it never
+    walks to a neighbouring model. Pricing 5.5 as 5 would report $5 where the
+    real rate is $4, which is worse than admitting the rate is unknown.
+    """
+    name = (model or "").strip()
+    if not name:
+        return []
+    candidates = [name]
+    # 'opus-5-5' → 'opus-5.5'. Only between digits, so 'gpt-4-turbo' is safe.
+    dotted = re.sub(r"(\d)-(\d)", r"\1.\2", name)
+    if dotted not in candidates:
+        candidates.append(dotted)
+    # A dated snapshot ('haiku-4-5-20251001') bills at its base model's rate.
+    undated = re.sub(r"-\d{8}$", "", dotted)
+    if undated not in candidates:
+        candidates.append(undated)
+    return candidates
 
 
 def estimate_cost(model: str, vendor: str, tokens: Dict[str, int],
@@ -280,7 +324,11 @@ def estimate_cost(model: str, vendor: str, tokens: Dict[str, int],
     None says the price is unknown, which is what the panel must show for a
     model the rate source does not carry.
     """
-    rate = (rates or {}).get(f"{vendor}/{model}")
+    rate = None
+    for candidate in _rate_candidates(model):
+        rate = (rates or {}).get(f"{vendor}/{candidate}")
+        if rate:
+            break
     if not rate:
         return None
     return (
@@ -336,7 +384,7 @@ def build_usage(db_path: str, session_id: str, gateways: Dict[str, str],
     merged: Dict[tuple, Dict[str, Any]] = {}
     for row in rows:
         provider = provider_name(row["billing_provider"], row["base_url"], gateways)
-        vendor = upstream_vendor(provider, row["base_url"])
+        vendor = upstream_vendor(provider, row["base_url"], row["model"])
         key = (row["model"], provider, vendor)
         bucket = merged.get(key)
         if bucket is None:
