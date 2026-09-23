@@ -42,10 +42,19 @@ Suites are safe to run at once: each builds its own `mktemp` sandbox and fakes
 bun run setup              # or ./setup_hermes_tools.sh without bun
 ```
 
-Installs `comp-count` and `provider-limits` under `~/.hermes` and sets the
-`provider-limits` backend gate. Idempotent, and restarts the Hermes gateway only
-when the **backend** actually changed — a desktop-only edit does not, since the
-renderer picks it up without one and a restart would end live sessions.
+Installs `comp-count` and `provider-limits` under `~/.hermes` and sets both
+backend gates. Idempotent, and it **restarts nothing** — when the backend half
+changed it prints an instruction to restart Hermes Desktop instead.
+
+That is not laziness. Plugin routes (`/api/plugins/<name>/`) are mounted by the
+`hermes serve --port 0` child that **Hermes.app spawns for itself**, not by the
+launchd gateway: its `Mounted plugin API routes` lines land in `gui.log` and
+never in `gateway.log`. `hermes gateway restart` therefore restarts an unrelated
+process — it ends the user's live sessions and leaves the new plugin unmounted,
+its REST calls answering 404. This script used to do exactly that.
+
+A desktop-only edit needs no restart at all: the renderer picks it up through
+Electron's reconcile.
 
 The desktop half the renderer loads is a third copy: Electron materializes
 `plugins/<name>/desktop/` into `desktop-plugins/<name>/`. Only Electron may
@@ -57,19 +66,20 @@ the TeamClaude OAuth proxy now ships in the Hermes fork, so the patch and the
 provider-settings repair were removed — those settings had drifted from the
 working configuration, and "repairing" them would have broken a live install.
 
-The script cannot enable the `provider-limits` **desktop** half: the loader
-forces a materialized package off whatever the plugin declares, so flip it on
-once in Capabilities → Plugins.
+The script cannot enable either **desktop** half: the loader forces a
+materialized package off whatever the plugin declares, so flip them on once in
+Capabilities → Plugins.
 
 ## Provider limits plugin
 
 `plugins/provider-limits/` is the source of truth for the status-bar quota chip.
-Unlike `comp-count` it has two halves — a FastAPI backend and the desktop UI —
+Like `comp-count` it has two halves — a FastAPI backend and the desktop UI —
 and installs into `~/.hermes/plugins/`.
 
 Both halves default to OFF — that is the plugin security boundary
-(GHSA-mcfc-hp25-cjv7), not an oversight. Backend routes mount at gateway startup
-only, which is why the setup script restarts the gateway after updating them.
+(GHSA-mcfc-hp25-cjv7), not an oversight. Backend routes mount only when the
+app's own server starts, which is why the setup script asks for an app restart
+after updating them.
 
 Its own bench runs offline and needs no API keys; the live-upstream pass is
 opt-in because an upstream outage is not this code breaking:

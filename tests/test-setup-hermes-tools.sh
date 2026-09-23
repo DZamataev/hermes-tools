@@ -2,7 +2,13 @@
 
 # Checks for setup_hermes_tools.sh. A fake `hermes` records every invocation, so
 # the assertions cover not just the installed files but exactly which commands
-# ran — a needless `gateway restart` ends the user's live sessions.
+# ran.
+#
+# The script must restart NOTHING. Plugin routes are mounted by the `hermes
+# serve` child Hermes.app spawns for itself — not by the launchd gateway — so a
+# `gateway restart` ends the user's live sessions AND leaves the plugin
+# unmounted. The fake below treats it as a hard error rather than an assertion
+# in one scenario, so no future path can reintroduce it quietly.
 
 set -eu
 
@@ -33,6 +39,10 @@ case "$1 $2" in
     printf -- '- %s\n' "$name" >>"$FAKE_PLUGINS_STATE"
     ;;
   'gateway restart')
+    # Not "unexpected" — specifically forbidden, and worth its own message:
+    # this is the regression that shipped once already.
+    printf 'setup_hermes_tools restarted the gateway; it serves no plugin routes\n' >&2
+    exit 65
     ;;
   'config set'|'config unset')
     # Accepted on purpose, and recorded separately: a check at the end of this
@@ -68,13 +78,20 @@ fail() {
   exit 1
 }
 
+# Every run's stdout is kept: the script's remedy for a backend change is the
+# printed instruction (it restarts nothing), so the output IS the behaviour
+# under test, not a side effect. Callers redirect to /dev/null for quiet; the
+# copy in $test_dir/out is what the assertions read.
 run_script() {
   HERMES_BIN="$fake_hermes" \
   HERMES_HOME="$test_dir/home" \
   FAKE_HERMES_LOG="$test_dir/log" \
   FAKE_PLUGINS_STATE="$test_dir/plugins-state" \
   FAKE_CONFIG_WRITES="$test_dir/config-writes" \
-    "$script"
+    "$script" >"$test_dir/out" 2>"$test_dir/err" && script_status=0 || script_status=$?
+  cat "$test_dir/err" >&2
+  cat "$test_dir/out"
+  return "$script_status"
 }
 
 # A writable copy of the repository, for cases that must dirty the source.
@@ -102,8 +119,16 @@ done
 assert_equal "config get plugins.enabled
 plugins enable --no-allow-tool-override comp-count
 config get plugins.enabled
-plugins enable --no-allow-tool-override provider-limits
-gateway restart" "$(cat "$test_dir/log")" 'enables both gates and restarts on first install'
+plugins enable --no-allow-tool-override provider-limits" \
+  "$(cat "$test_dir/log")" 'enables both gates and restarts nothing on first install'
+
+# A first install cannot be finished by this script: the app's server imported
+# its modules before the plugin existed. Saying so IS the remedy, so the printed
+# instruction is part of the contract, not decoration.
+grep -qi 'RESTART HERMES DESKTOP' "$test_dir/out" ||
+  fail 'never tells the user to restart the app, so the plugin stays unmounted'
+grep -qi 'Capabilities' "$test_dir/out" ||
+  fail 'never names where to enable the desktop half'
 
 # --- second run: everything already in place --------------------------------
 
@@ -113,7 +138,7 @@ assert_equal 'config get plugins.enabled
 config get plugins.enabled' "$(cat "$test_dir/log")" \
   'does nothing when the plugins are already installed'
 
-# --- a comp-count desktop-only change must not restart the gateway ----------
+# --- a comp-count desktop-only change needs no restart at all ---------------
 
 : >"$test_dir/log"
 printf 'stale plugin\n' >"$test_dir/home/plugins/comp-count/desktop/plugin.js"
@@ -121,14 +146,13 @@ run_script >/dev/null
 cmp -s "$comp_count_source/desktop/plugin.js" \
   "$test_dir/home/plugins/comp-count/desktop/plugin.js" ||
   fail 'restores an outdated comp-count desktop half'
-if grep -qx 'gateway restart' "$test_dir/log"; then
-  fail 'restarts the gateway when only the comp-count desktop half changed'
-fi
+grep -qi 'no restart needed' "$test_dir/out" ||
+  fail 'asks for a restart when only the comp-count desktop half changed'
 
-# --- a desktop-only change must NOT restart the gateway ---------------------
+# --- a desktop-only change must NOT ask for a restart -----------------------
 
 # The renderer picks up a desktop edit through Electron's reconcile, so a CSS
-# fix must not end the user's live sessions. This was a real defect: every
+# fix must not send the user to quit the app. This was a real defect: every
 # desktop-only edit restarted the gateway.
 : >"$test_dir/log"
 printf 'stale\n' >"$test_dir/home/plugins/provider-limits/desktop/plugin.js"
@@ -136,11 +160,10 @@ run_script >/dev/null
 cmp -s "$root_dir/plugins/provider-limits/desktop/plugin.js" \
   "$test_dir/home/plugins/provider-limits/desktop/plugin.js" ||
   fail 'restores an outdated provider-limits desktop half'
-if grep -qx 'gateway restart' "$test_dir/log"; then
-  fail 'restarts the gateway for a desktop-only change'
-fi
+grep -qi 'no restart needed' "$test_dir/out" ||
+  fail 'asks for a restart after a desktop-only change'
 
-# --- updated backend source must restart ------------------------------------
+# --- updated backend source must ask for an app restart ---------------------
 
 # A file deleted upstream must disappear from the installed copy: a stale
 # plugin_api.py is still imported by the gateway.
@@ -154,8 +177,8 @@ fi
 cmp -s "$root_dir/plugins/provider-limits/dashboard/plugin_api.py" \
   "$test_dir/home/plugins/provider-limits/dashboard/plugin_api.py" ||
   fail 'restores an outdated provider-limits backend'
-grep -qx 'gateway restart' "$test_dir/log" ||
-  fail 'does not restart after updating the provider-limits backend'
+grep -qi 'RESTART HERMES DESKTOP' "$test_dir/out" ||
+  fail 'stays silent after a backend update, so the stale module keeps serving'
 
 # --- the renderer's copy gets nudged, and nothing is left behind ------------
 
@@ -244,24 +267,27 @@ for name in comp-count provider-limits; do
   grep -qx -- "- $name" "$test_dir/plugins-state" ||
     fail "re-enables the $name gate once it is no longer set"
 done
-grep -qx 'gateway restart' "$test_dir/log" ||
-  fail 'does not restart after setting the gate again'
+grep -qi 'RESTART HERMES DESKTOP' "$test_dir/out" ||
+  fail 'stays silent after setting the gate again, so the gate never takes effect'
 
 # --- __pycache__ from the source never reaches the installed copy -----------
 
 # Running the plugin's own bench in the repository leaves __pycache__ behind;
 # that build artifact must not be installed. Cache in the TARGET is different —
-# Python writes it when the gateway imports the plugin, and deleting it on every
-# run would force a reinstall and a gateway restart for nothing, which is why
-# the comparison ignores it on both sides.
+# Python writes it when the server imports the plugin, and deleting it on every
+# run would force a reinstall and a needless "restart the app" for nothing,
+# which is why the comparison ignores it on both sides.
 : >"$test_dir/log"
 mkdir -p "$fixture_src/plugins/provider-limits/dashboard/__pycache__"
 printf 'compiled\n' >"$fixture_src/plugins/provider-limits/dashboard/__pycache__/x.pyc"
 printf 'changed\n' >>"$fixture_src/plugins/provider-limits/plugin.yaml"
+# The dirty COPY of the script, not the repository one, so run_script is not
+# usable here — but stdout still goes to the same file every other case reads,
+# or a later assertion would silently grade this run's output.
 HERMES_BIN="$fake_hermes" HERMES_HOME="$test_dir/home" \
   FAKE_HERMES_LOG="$test_dir/log" FAKE_PLUGINS_STATE="$test_dir/plugins-state" \
   FAKE_CONFIG_WRITES="$test_dir/config-writes" \
-  "$fixture_src/setup_hermes_tools.sh" >/dev/null
+  "$fixture_src/setup_hermes_tools.sh" >"$test_dir/out"
 if test -e "$test_dir/home/plugins/provider-limits/dashboard/__pycache__"; then
   fail 'copies __pycache__ out of the repository into the installed copy'
 fi
@@ -273,8 +299,8 @@ fi
 if FAKE_HERMES_FAIL_ENABLE=1 run_script >/dev/null 2>&1; then
   fail 'returns success when Hermes rejects the enable'
 fi
-if grep -qx 'gateway restart' "$test_dir/log"; then
-  fail 'restarts the gateway after a failed enable'
+if grep -qi 'RESTART HERMES DESKTOP' "$test_dir/out"; then
+  fail 'claims the install finished after a failed enable'
 fi
 
 # --- incomplete sources are refused before anything is written --------------

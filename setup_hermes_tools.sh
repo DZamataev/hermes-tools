@@ -2,11 +2,13 @@
 
 # Install the Hermes plugins kept in this repository into ~/.hermes.
 #
-# Deliberately does nothing else. Patching Hermes source lived here once; the
-# OAuth proxy now ships in the Hermes fork, and the TeamClaude provider settings
-# this script used to enforce had drifted from the working configuration, so
-# "repairing" them would have broken a live installation and restarted the
-# gateway underneath running sessions.
+# Deliberately does nothing else — in particular it restarts NOTHING. Patching
+# Hermes source lived here once; the OAuth proxy now ships in the Hermes fork,
+# and the TeamClaude provider settings this script used to enforce had drifted
+# from the working configuration, so "repairing" them would have broken a live
+# installation. A `hermes gateway restart` lived here too and was worse than
+# useless: it ended live sessions while restarting a process that does not serve
+# plugin routes at all (see the note above the final block).
 
 set -eu
 
@@ -40,7 +42,7 @@ fi
 
 installed=''
 any_changed=false
-restart_needed=false
+backend_changed=false
 gate_set=''
 
 # Install one package, updating the four globals above. A POSIX function cannot
@@ -57,13 +59,13 @@ install_package() {
   if ! diff -r -q \
     -x '.git' -x '__pycache__' -x '*.pyc' \
     "$source_dir" "$target_dir" >/dev/null 2>&1; then
-    # Only the BACKEND half needs a gateway restart. A desktop-only edit (CSS,
-    # the chip) reaches the screen through Electron's reconcile, and restarting
-    # for it would end the user's live sessions for nothing.
+    # Only a BACKEND change needs the app's own `hermes serve` process
+    # restarted. A desktop-only edit (CSS, the chip) reaches the screen through
+    # Electron's reconcile, so it costs the user nothing.
     if ! diff -r -q \
       -x '__pycache__' -x '*.pyc' \
       "$source_dir/dashboard" "$target_dir/dashboard" >/dev/null 2>&1; then
-      restart_needed=true
+      backend_changed=true
     fi
     install -d -m 0755 "$hermes_home/plugins"
     rm -rf "$target_dir.tmp"
@@ -79,10 +81,10 @@ install_package() {
   # The backend half must appear in plugins.enabled or its routes are never
   # imported (GHSA-mcfc-hp25-cjv7). Check before enabling: `plugins enable` is
   # idempotent but reports success either way, and treating that as a change
-  # would restart the gateway on every run.
+  # would tell the user to restart the app on every run.
   if ! "$hermes_bin" config get plugins.enabled 2>/dev/null | grep -qx -- "- $name"; then
     "$hermes_bin" plugins enable --no-allow-tool-override "$name"
-    restart_needed=true
+    backend_changed=true
     gate_set="${gate_set:+$gate_set, }$name"
     installed="${installed:+$installed, }$name backend gate"
   fi
@@ -126,21 +128,33 @@ if test "$any_changed" = true && test -d "$desktop_root"; then
   fi
 fi
 
-# Backend routes mount at gateway startup only, so new or updated BACKEND source
-# needs a restart — as does a newly set gate. A desktop-only change does not:
-# the renderer picks it up through the reconcile nudged above, and restarting
-# would end live sessions for nothing.
-if test "$restart_needed" = true; then
-  "$hermes_bin" gateway restart
-  printf 'Installed: %s; Hermes gateway restarted.\n' "$installed"
+# A plugin's Python half is imported ONCE, at the startup of the FastAPI server
+# that mounts /api/plugins/<name>/ — and that server is NOT the launchd gateway.
+# Hermes.app spawns its own `hermes serve --port 0` child and that child is what
+# mounts plugin routes (its "Mounted plugin API routes" lines land in gui.log,
+# never in gateway.log). `hermes gateway restart` restarts a different process
+# entirely: it ends the user's live sessions and leaves the plugin unmounted, so
+# this script does not run it.
+#
+# Nothing here may restart the app's server either. Killing the child assumes a
+# respawn that has not been proven, and no documented IPC asks Electron to
+# recycle its backend. Restarting the app is the user's call, so say so plainly
+# and let them pick the moment.
+if test "$backend_changed" = true; then
+  printf 'Installed: %s.\n' "$installed"
+  printf '\n'
+  printf 'RESTART HERMES DESKTOP to finish: the backend half is imported only\n'
+  printf 'when the app starts its own server, so the plugin stays unmounted (its\n'
+  printf 'REST calls 404) until Hermes.app is quit and reopened.\n'
   if test -n "$gate_set"; then
-    printf 'Enable the desktop half of %s in Capabilities → Plugins to see the chip.\n' "$gate_set"
+    printf '\n'
+    printf 'Then enable the desktop half of %s in Capabilities → Plugins.\n' "$gate_set"
   fi
   exit 0
 fi
 
 if test -n "$installed"; then
-  printf 'Installed: %s; gateway restart not needed.\n' "$installed"
+  printf 'Installed: %s; desktop-only change, no restart needed.\n' "$installed"
 else
   printf 'Plugins are already installed and enabled; nothing to do.\n'
 fi
