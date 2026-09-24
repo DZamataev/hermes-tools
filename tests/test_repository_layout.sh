@@ -37,6 +37,10 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
   fail "provider-limits backend half is missing"
 [[ -x "$ROOT/plugins/provider-limits/tests/run.sh" ]] ||
   fail "provider-limits test bench is missing or not executable"
+[[ -f "$ROOT/kanban/SKILL.md" ]] || fail "kanban skill is missing"
+for script in kanban-init.sh kanban-profiles.sh kanban-card.sh kanban-chain.py kanban-monitor.py kanban-coordinator.sh; do
+  [[ -x "$ROOT/kanban/scripts/$script" ]] || fail "kanban/scripts/$script is missing or not executable"
+done
 
 for obsolete in \
   "$ROOT/open-webui" \

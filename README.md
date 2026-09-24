@@ -17,6 +17,10 @@ plugins installed.
   showing each custom provider's 5-hour quota in the status bar.
 - `setup_hermes_tools.sh` — installs both plugins as unified packages under
   `~/.hermes/plugins`.
+- `kanban/` — the `hermes-kanban-development` skill: the method for building a
+  repository with implement → review → fix workers on a Hermes Kanban board,
+  plus repo-agnostic scripts (init, profiles, cards, chains, the change
+  detector and the unattended coordinator job). See [Kanban skill](#kanban-skill).
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
@@ -125,6 +129,25 @@ plugins/provider-limits/tests/run.sh --e2e    # plus real route and upstreams
 
 `bun run check` runs the offline pass. See the plugin's own README for what it draws
 and why.
+
+## Kanban skill
+
+`kanban/` is a Hermes skill (`SKILL.md`) and its scripts. It is self-contained (see `kanban/README.md`)
+and installs by copy:
+
+```bash
+bash kanban/install.sh      # copies the skill into ~/.hermes/skills
+```
+
+A repository opts in with `kanban/scripts/kanban-init.sh <board-slug>`, which
+scaffolds `.kanban/config.env`, the role templates and a per-repo runbook and
+never overwrites. Every script prints its usage with no arguments. The tests
+drive the scripts against a fake `hermes` (`KANBAN_HERMES`), so no board,
+profile or cron job is touched:
+
+```bash
+bun run check kanban
+```
 
 ## Dock application
 
