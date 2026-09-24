@@ -17,6 +17,9 @@ export HERMES_HOME="$SANDBOX/home" FAKE_STATE="$SANDBOX/state.json" FAKE_LOG="$S
 echo '{"tasks": [], "next": 1, "subs": [], "jobs": []}' > "$FAKE_STATE"
 cp "$HERE/fake_hermes.py" "$SANDBOX/bin/hermes"; chmod +x "$SANDBOX/bin/hermes"
 export KANBAN_HERMES="$SANDBOX/bin/hermes"
+# The suite may itself run inside a Hermes session: start from "no calling session".
+unset HERMES_SESSION_KEY HERMES_SESSION_PLATFORM HERMES_SESSION_CHAT_ID HERMES_CRON_SESSION HERMES_KANBAN_TASK \
+  KANBAN_NOTIFY_SESSION
 
 # ---- a repo ------------------------------------------------------------------
 R="$SANDBOX/repo"; mkdir -p "$R"; git -C "$R" init -q; git -C "$R" commit -q --allow-empty -m init
@@ -53,6 +56,28 @@ if "$S/kanban-card.sh" impl "x" task.md relative/path >/dev/null 2>&1; then bad 
 FAKE_NO_ID=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1 && bad "card fails when create returns no id" || ok "card fails when create returns no id"
 GID="$("$S/kanban-card.sh" gate "G" task.md "$R")"
 check "gate is created blocked with no assignee" "grep \"create G \" '$FAKE_LOG' | grep -q -- '--initial-status blocked' && ! grep \"create G \" '$FAKE_LOG' | grep -q -- '--assignee'"
+check "card outside a session subscribes no session" "! grep -q -- '--platform tui' '$FAKE_LOG'"
+
+# card: the calling desktop/TUI session is subscribed too
+: > "$FAKE_LOG"
+SID="$(HERMES_SESSION_KEY=sess-orch "$S/kanban-card.sh" impl "S" task.md "$R")"
+check "card subscribes the calling session" "grep -q \"notify-subscribe $SID --platform tui --chat-id sess-orch\" '$FAKE_LOG'"
+check "card keeps the notify target next to the session" "[ \$(grep -c \"notify-subscribe $SID \" '$FAKE_LOG') = 2 ]"
+: > "$FAKE_LOG"
+HERMES_SESSION_KEY=sess-orch KANBAN_NOTIFY_SESSION=0 "$S/kanban-card.sh" impl "S" task.md "$R" >/dev/null
+check "KANBAN_NOTIFY_SESSION=0 skips the session" "! grep -q -- '--platform tui' '$FAKE_LOG'"
+HERMES_SESSION_KEY=sess-cron HERMES_CRON_SESSION=1 "$S/kanban-card.sh" impl "S" task.md "$R" >/dev/null
+check "a cron session is not subscribed" "! grep -q -- 'sess-cron' '$FAKE_LOG'"
+HERMES_SESSION_KEY=sess-worker HERMES_KANBAN_TASK=t_9 "$S/kanban-card.sh" impl "S" task.md "$R" >/dev/null
+check "a board worker's session is not subscribed" "! grep -q -- 'sess-worker' '$FAKE_LOG'"
+HERMES_SESSION_KEY=sess-tg HERMES_SESSION_PLATFORM=telegram HERMES_SESSION_CHAT_ID=42 \
+  "$S/kanban-card.sh" impl "S" task.md "$R" >/dev/null
+check "a gateway session is left to the notify target" "! grep -q -- 'sess-tg' '$FAKE_LOG'"
+rm -f .kanban/notify.env.off; mv .kanban/notify.env .kanban/notify.env.off
+: > "$FAKE_LOG"
+NID="$(HERMES_SESSION_KEY=sess-orch "$S/kanban-card.sh" impl "S" task.md "$R")"
+check "the session is subscribed with no notify target configured" "[ \$(grep -c \"notify-subscribe $NID \" '$FAKE_LOG') = 1 ] && grep -q \"notify-subscribe $NID --platform tui\" '$FAKE_LOG'"
+mv .kanban/notify.env.off .kanban/notify.env
 
 # chain
 : > "$FAKE_LOG"
@@ -66,6 +91,16 @@ check "review card uses the review profile" "grep -q 'create List: review .*--as
 FAKE_WRONG_PARENT=1 "$S/kanban-chain.py" --title "Bad" --task task.md --workdir "$R" >/dev/null 2>&1 \
   && bad "chain stops when an edge is wrong" || ok "chain stops when an edge is wrong"
 check "chain with a wrong edge releases nothing" "! grep -q 'unblock.*' <(sed -n '/create Bad/,\$p' '$FAKE_LOG')"
+
+# chain from an orchestrator session: every card reports back to it
+: > "$FAKE_LOG"
+OUT="$(HERMES_SESSION_KEY=sess-orch "$S/kanban-chain.py" --title "Sess" --task task.md --workdir "$R" --gate-task task.md)"
+check "chain subscribes the calling session to every card" "[ \$(grep -c 'notify-subscribe .*--platform tui --chat-id sess-orch' '$FAKE_LOG') = 4 ]"
+check "chain reports the subscribed session" "grep -q 'session=sess-orch' <<<'$OUT'"
+: > "$FAKE_LOG"
+FAKE_SUB_FAIL=tui HERMES_SESSION_KEY=sess-orch "$S/kanban-chain.py" --title "NoSub" --task task.md --workdir "$R" >/dev/null 2>&1 \
+  && bad "chain stops when the session subscription fails" || ok "chain stops when the session subscription fails"
+check "chain with a failed session subscription releases nothing" "! grep -q ' unblock ' '$FAKE_LOG'"
 
 # monitor
 check "monitor drill passes" "python3 '$S/kanban-monitor.py' --drill >/dev/null"

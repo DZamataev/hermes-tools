@@ -5,14 +5,16 @@
                   [--after <id> ...] [--gate-task <gate.md>] [--hold] [--dry-run]
 
 Every card is created BLOCKED through kanban-card.sh (so each carries its role
-preamble and notify subscription), the edges are checked, then only the head is
+preamble and notify subscriptions), the edges are checked, then only the head is
 released and dispatched — nothing can be claimed before its parent is linked.
+Run from a desktop/TUI session, every card is also subscribed to that session
+(checked like the edges), so the orchestrator is told when a card blocks or ends.
 
 --after      parents of the implement card (usually the previous slice's fix)
 --gate-task  add an operator gate card parented on the fix; it stays blocked
 --hold       create everything but release nothing (review the board first)
 
-Prints `impl=<id> review=<id> fix=<id> [gate=<id>]`.
+Prints `impl=<id> review=<id> fix=<id> [gate=<id>] [session=<key>]`.
 Run it from inside the repository (or set KANBAN_REPO).
 """
 import argparse
@@ -54,6 +56,23 @@ def parents_of(board, card_id):
     out = subprocess.run([HERMES, "kanban", "--board", board, "show", card_id, "--json"],
                          capture_output=True, text=True)
     return json.loads(out.stdout).get("parents", [])
+
+
+def session_key():
+    """The calling desktop/TUI session that kanban-card.sh subscribes (lib.sh decides), or ''."""
+    out = subprocess.run(["bash", "-c", f'. "{HERE}/lib.sh"; kanban_session_key'],
+                         capture_output=True, text=True)
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def follows(board, card_id, session):
+    out = subprocess.run([HERMES, "kanban", "--board", board, "notify-list", card_id, "--json"],
+                         capture_output=True, text=True)
+    try:
+        subs = json.loads(out.stdout or "[]")
+    except ValueError:
+        return False
+    return any((s.get("platform") or "").lower() == "tui" and s.get("chat_id") == session for s in subs)
 
 
 def hermes(board, *args):
@@ -101,6 +120,14 @@ def main():
             got = parents_of(board, ids[role])
             if sorted(got) != sorted(want):
                 sys.exit(f"{role} {ids[role]} has parents {got}, expected {want} — board left blocked")
+        # The orchestrating session must hear this chain's blocks and completions: check it follows every card
+        # before anything runs, the same way the edges are checked.
+        session = session_key()
+        if session:
+            missing = [f"{role} {ids[role]}" for role in ids if not follows(board, ids[role], session)]
+            if missing:
+                sys.exit(f"session {session} is not subscribed to {', '.join(missing)} — board left blocked")
+            ids["session"] = session
         if not a.hold:
             # Only the implementation head and its two followers are released;
             # dependency edges keep review/fix waiting. The gate stays blocked.

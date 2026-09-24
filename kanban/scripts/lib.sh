@@ -2,6 +2,7 @@
 # Shared helpers for the kanban scripts. Sourced, not run.
 #   kanban_load_config   — finds the repo, loads .kanban/config.env and the notify env
 #   kanban_render FILE   — prints FILE with {{PLACEHOLDERS}} substituted from the environment
+#   kanban_session_key   — the calling desktop/TUI session to subscribe, or nothing
 
 KANBAN_SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KANBAN_SKILL_DIR="$(cd "$KANBAN_SCRIPTS/.." && pwd)"
@@ -46,6 +47,20 @@ kanban_notify_target() {
   [ -n "${KANBAN_NOTIFY_CHAT_ID:-}" ] || return 0
   printf '%s:%s%s' "${KANBAN_NOTIFY_PLATFORM:-telegram}" "$KANBAN_NOTIFY_CHAT_ID" \
     "${KANBAN_NOTIFY_THREAD_ID:+:$KANBAN_NOTIFY_THREAD_ID}"
+}
+
+# The desktop/TUI session running the script, empty when there is none to report
+# back to. Its board events are delivered by that session's own poller
+# (platform "tui", chat id = HERMES_SESSION_KEY), so an orchestrator hears about
+# blocks and completions of cards it created by script. Not for gateway sessions
+# (the notify target covers them), cron runs or board workers (nobody reads
+# their session), or when KANBAN_NOTIFY_SESSION=0.
+kanban_session_key() {
+  [ "${KANBAN_NOTIFY_SESSION:-1}" != 0 ] || return 0
+  [ -z "${HERMES_SESSION_PLATFORM:-}" ] || return 0
+  [ -z "${HERMES_KANBAN_TASK:-}" ] || return 0
+  case "${HERMES_CRON_SESSION:-}" in 1|true|yes|on) return 0 ;; esac
+  printf '%s' "${HERMES_SESSION_KEY:-}"
 }
 
 # Substitutes {{NAME}} with $KANBAN_NAME, or $NAME for the few plain ones set by

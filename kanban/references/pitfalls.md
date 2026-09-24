@@ -172,6 +172,9 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 
 - **`create --json` skips auto-subscribe.** Subscribe explicitly and check
   `notify-list`.
+- **A card subscribed only to the chat never reaches the orchestrator
+  session.** The session learns of a block only if the card is subscribed to
+  `tui:$HERMES_SESSION_KEY` too; the scripts do it, hand-made cards must.
 - **Truncation depends on the event:** completed gives the first line of the
   summary (~200 chars), blocked the reason (~160), and crashed/timed_out no
   text. Front-load block reasons. Keep completion summaries neutral with a

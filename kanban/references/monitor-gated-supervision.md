@@ -1,8 +1,9 @@
 # Supervising a long run with a change-detector, not a poll
 
-The orchestrator session does not wake between operator messages, and the board
-already pushes its own terminal events. So the supervision worth adding is the
-one nobody reports: **silent stalls**. A cron job that merely re-reads the board
+The orchestrator session hears the board's terminal events only for cards
+subscribed to it (the scripts subscribe it), and only while it stays open; the
+board also pushes those events to the operator's chat. So the supervision worth
+adding is the one nobody reports: **silent stalls**. A cron job that merely re-reads the board
 every N minutes duplicates notifications the operator already gets and burns a
 model run per tick to say "still fine".
 

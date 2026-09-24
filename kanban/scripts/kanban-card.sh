@@ -6,13 +6,15 @@
 # Reads .kanban/config.env of the repo you run it from (or KANBAN_REPO).
 # Env: KANBAN_BLOCKED=1 creates the card blocked (gate cards always are).
 #      KANBAN_SKILLS="a b" force-loads skills into the worker.
+#      KANBAN_NOTIFY_SESSION=0 skips subscribing the calling session.
 # Body = <templates>/<role template> with {{…}} filled + the task file.
-# Subscribes the card to the notify target when one is configured.
+# Subscribes the card to the notify target when one is configured, and to the
+# calling desktop/TUI session (HERMES_SESSION_KEY) so an orchestrator hears back.
 # Prints the new card id and nothing else on stdout.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
-if [ $# -lt 4 ]; then sed -n 2,12p "$0" >&2; exit 2; fi
+if [ $# -lt 4 ]; then sed -n 2,14p "$0" >&2; exit 2; fi
 ROLE="$1"; TITLE="$2"; TASK="$3"; WORKDIR="$4"; shift 4
 kanban_load_config
 export WORKDIR
@@ -70,5 +72,12 @@ if [ -n "${KANBAN_NOTIFY_CHAT_ID:-}" ]; then
   fi
   hermes_cli kanban --board "$KANBAN_BOARD" notify-subscribe "$ID" "${SUB[@]}" >/dev/null \
     || printf 'kanban-card: %s created but notify-subscribe failed\n' "$ID" >&2
+fi
+# ...and the orchestrating session itself, so its blocks/completions reach it.
+SESSION="$(kanban_session_key)"
+if [ -n "$SESSION" ]; then
+  hermes_cli kanban --board "$KANBAN_BOARD" notify-subscribe "$ID" --platform tui --chat-id "$SESSION" \
+    --delivery-mode notify >/dev/null \
+    || printf 'kanban-card: %s created but the session subscription failed\n' "$ID" >&2
 fi
 echo "$ID"

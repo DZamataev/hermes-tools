@@ -4,6 +4,7 @@
 Only the subcommands the kanban scripts use are implemented. Knobs:
 FAKE_NO_ID=1          create --json returns no id
 FAKE_WRONG_PARENT=1   show --json reports no parents
+FAKE_SUB_FAIL=<p>     notify-subscribe for platform <p> fails
 """
 import json
 import os
@@ -60,7 +61,16 @@ if argv[:1] == ["kanban"]:
             if t["id"] in rest[1:]:
                 t["status"] = "todo"
         save()
-    elif cmd in ("dispatch", "notify-subscribe"):
+    elif cmd == "notify-subscribe":
+        platform = opt("--platform")
+        if os.environ.get("FAKE_SUB_FAIL") == platform:
+            sys.exit(f"fake hermes: notify-subscribe {platform} failed")
+        state["subs"].append({"task_id": rest[1], "platform": platform, "chat_id": opt("--chat-id"),
+                              "thread_id": opt("--thread-id", "")})
+        save()
+    elif cmd == "notify-list":
+        print(json.dumps([s for s in state["subs"] if s["task_id"] == rest[1]]))
+    elif cmd == "dispatch":
         pass
     else:
         sys.exit(f"fake hermes: unsupported kanban {cmd}")

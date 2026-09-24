@@ -26,8 +26,8 @@ arguments. Requires `bash`, `python3` and `git`; nothing else.
 |---|---|
 | `kanban-init.sh <slug> [repo]` | scaffolds `.kanban/config.env`, role templates, the per-repo runbook, gitignores the notify env. Never overwrites. |
 | `kanban-profiles.sh <prefix>` | creates `<prefix>impl/review/fix` profiles, rewrites their memory to role-only content, optional model pins |
-| `kanban-card.sh <role> "<title>" <task-file\|-> <workdir> [parent…]` | one card: role template + task body, profile, retries, workspace, notify subscription; prints the id |
-| `kanban-chain.py` | implement → review → fix triple (optionally after a parent, optionally with an operator gate), created blocked, linked, head released |
+| `kanban-card.sh <role> "<title>" <task-file\|-> <workdir> [parent…]` | one card: role template + task body, profile, retries, workspace, notify subscription (+ the calling desktop/TUI session); prints the id |
+| `kanban-chain.py` | implement → review → fix triple (optionally after a parent, optionally with an operator gate), created blocked, linked, session subscription checked, head released |
 | `kanban-monitor.py` | the change-detector for a supervising cron job; stable tokens only |
 | `kanban-coordinator.sh up\|down\|status\|prompt\|drill` | installs the detector, renders the coordinator prompt, creates / removes the cron job |
 
@@ -167,7 +167,9 @@ Board mechanics the scripts already respect (know them when working by hand):
 - `create --json` returns the id under **`id`**. `link` is positional
   `parent child`; read `parents:` in `show <child>` afterwards.
 - Bodies via `--body-file -` (stdin), never `--body "$BODY"`.
-- `--json` creation skips auto-subscribe: subscribe every card.
+- `--json` creation skips auto-subscribe: subscribe every card — the notify
+  target **and** the orchestrating session (`--platform tui --chat-id
+  "$HERMES_SESSION_KEY"`), or the session never hears of a block.
 - **One writer per worktree**: cards sharing a workspace are chained. Research
   cards that each write one *new* file may share the primary checkout.
 - Archiving a card releases its children; re-parent them.
@@ -261,8 +263,18 @@ bash $K/kanban-coordinator.sh down       # when the board drains — do not leav
 
 ## 10. Notifications
 
-Delivery target: `platform:chat_id[:thread_id]`. What reaches the operator is
-truncated per event and not configurable:
+Two destinations per card:
+
+- **The notify target** (`platform:chat_id[:thread_id]` from the notify env):
+  the operator's chat.
+- **The orchestrating session.** Run from a desktop/TUI session, the scripts
+  also subscribe `tui:$HERMES_SESSION_KEY`; that session's own poller delivers
+  blocks and completions into it as a turn, so the orchestrator reacts without
+  being asked. Not done for gateway sessions (the notify target covers them),
+  cron runs or board workers; `KANBAN_NOTIFY_SESSION=0` turns it off. The
+  session must stay open: a closed tab hears nothing until it is reopened.
+
+What reaches the operator is truncated per event and not configurable:
 
 | Event | Delivered |
 |---|---|
