@@ -12,7 +12,10 @@ dependencies outside itself.
 
 ## Requirements
 
-- Hermes Agent with the Kanban board (`hermes kanban`)
+- Hermes Agent with the Kanban board (`hermes kanban`), **built from the
+  `develop` branch of [DZamataev/hermes-agent](https://github.com/DZamataev/hermes-agent)**
+  until its Kanban fixes reach upstream. The orchestrating session relies on it;
+  see "Hermes build" in `SKILL.md`.
 - `bash`, `python3` (stdlib only), `git`
 - macOS or Linux
 

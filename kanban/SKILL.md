@@ -251,6 +251,24 @@ map entries, and its e2e runs collide with running cards over fixed ports.
 
 ## 10. Notifications
 
+### Hermes build
+
+Session delivery works only on a Hermes built from the `develop` branch of the
+fork [DZamataev/hermes-agent](https://github.com/DZamataev/hermes-agent). None
+of these fixes has reached upstream NousResearch/hermes-agent yet:
+
+| Without the fork | Consequence |
+|---|---|
+| a `tui` subscription is keyed by the session key, and context compression rotates that key | after the orchestrator's first compaction, every card created before it stops reporting into the session: no completions, no blocks (upstream issue #91037) |
+| no `board_quiescent` event | nothing says "the board ran out of work" (🏁), with the blocked and waiting cards named |
+| the reaper judges a worker by a fingerprint and a shared log | a live worker is killed as crashed, and a worker that died before its first heartbeat spends the card's retries |
+
+Check the running install before relying on the session:
+`git -C ~/.hermes/hermes-agent log --oneline -1 --grep board_quiescent` prints a
+commit. Empty output means the orchestrator goes deaf after its first
+compaction. Supervise by hand then (`list`, `show`) or switch the install to
+the fork.
+
 Two destinations per card:
 
 - **The notify target** (`platform:chat_id[:thread_id]` from the notify env):
