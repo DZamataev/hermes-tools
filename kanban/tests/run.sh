@@ -51,6 +51,11 @@ check "card body ends with the task" "[ \"\$(tail -1 <<<\"\$BODY\")\" = 'do the 
 check "card goes to the impl profile" "grep -q 'create Slice: implement.*--assignee demoimpl' '$FAKE_LOG'"
 check "card body goes through stdin" "grep -q -- '--body-file -' '$FAKE_LOG'"
 check "card subscribes to the thread" "grep -q 'notify-subscribe t_1 .*--thread-id 9 --chat-type thread' '$FAKE_LOG'"
+check "impl card carries the local-commit contract" "grep 'create Slice: implement' '$FAKE_LOG' | grep -q -- '--completion-contract local-commit'"
+: > "$FAKE_LOG"
+for role in fix research review; do "$S/kanban-card.sh" "$role" "C-$role" task.md "$R" >/dev/null; done
+check "fix card carries the local-commit contract" "grep 'create C-fix ' '$FAKE_LOG' | grep -q -- '--completion-contract local-commit'"
+check "research and review cards carry no contract" "! grep -E 'create C-(research|review) ' '$FAKE_LOG' | grep -q -- '--completion-contract'"
 if "$S/kanban-card.sh" impl "x" task.md "$R" "" >/dev/null 2>&1; then bad "card refuses an empty parent"; else ok "card refuses an empty parent"; fi
 if "$S/kanban-card.sh" impl "x" task.md relative/path >/dev/null 2>&1; then bad "card refuses a relative workdir"; else ok "card refuses a relative workdir"; fi
 FAKE_NO_ID=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1 && bad "card fails when create returns no id" || ok "card fails when create returns no id"
@@ -113,6 +118,8 @@ check "profiles creates three roles" "[ \$(grep -c 'profile create' '$FAKE_LOG')
 check "profiles rewrites cloned memory" "grep -q 'blind adversarial reviewer' '$HERMES_HOME/profiles/demoreview/memories/MEMORY.md' && ! grep -q INHERITED '$HERMES_HOME/profiles/demoreview/memories/MEMORY.md'"
 check "profiles pins the reviewer model" "grep -q 'config set model.default gpt-x' '$FAKE_LOG'"
 check "profiles writes the fallback block" "grep -q -- '- provider: other' '$HERMES_HOME/profiles/demoreview/config.yaml'"
+check "profiles sets worker_fallback=wait on impl and fix" "grep -qx 'kanban.worker_fallback=wait' '$HERMES_HOME/profiles/demoimpl/config.set' 2>/dev/null && grep -qx 'kanban.worker_fallback=wait' '$HERMES_HOME/profiles/demofix/config.set' 2>/dev/null"
+check "profiles leaves the reviewer on allow" "! grep -q worker_fallback '$HERMES_HOME/profiles/demoreview/config.set' 2>/dev/null"
 echo "KEEP" > "$HERMES_HOME/profiles/demoimpl/memories/MEMORY.md"
 "$S/kanban-profiles.sh" demo >/dev/null
 check "profiles keeps an existing memory" "grep -qx KEEP '$HERMES_HOME/profiles/demoimpl/memories/MEMORY.md'"

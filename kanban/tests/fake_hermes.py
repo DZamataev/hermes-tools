@@ -72,6 +72,15 @@ if argv[:1] == ["kanban"]:
         print(json.dumps([s for s in state["subs"] if s["task_id"] == rest[1]]))
     elif cmd == "dispatch":
         pass
+    elif cmd == "replace":
+        old, new = rest[1], opt("--with")
+        for t in state["tasks"]:
+            if old in t["parents"]:
+                t["parents"] = [new if p == old else p for p in t["parents"]]
+            if t["id"] == old:
+                t["status"] = "archived"
+        save()
+        print(json.dumps({"old": old, "new": new}))
     else:
         sys.exit(f"fake hermes: unsupported kanban {cmd}")
 elif argv[:2] == ["profile", "create"]:
@@ -79,7 +88,9 @@ elif argv[:2] == ["profile", "create"]:
     os.makedirs(d, exist_ok=True)
     open(os.path.join(d, "MEMORY.md"), "w").write("INHERITED notes from the source profile\n")
 elif argv[:2] == ["config", "set"]:
-    pass
+    # HERMES_HOME is the profile dir here: record per profile what was set.
+    with open(os.path.join(home, "config.set"), "a") as f:
+        f.write(f"{argv[2]}={argv[3]}\n")
 elif argv[:2] == ["config", "get"]:
     print("fake-value")
 else:

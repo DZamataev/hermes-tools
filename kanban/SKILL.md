@@ -170,9 +170,13 @@ Board mechanics the scripts already respect (know them when working by hand):
   "$HERMES_SESSION_KEY"`), or the session never hears of a block.
 - **One writer per worktree**: cards sharing a workspace are chained. Research
   cards that each write one *new* file may share the primary checkout.
-- Archiving a card releases its children; re-parent them.
-- A body is frozen at creation. If a queued card's inputs move, **archive and
-  recreate** it (re-link edges, re-subscribe). Comment only on a running card.
+- Archiving a card releases its children; to swap a card in a chain use
+  `hermes kanban replace OLD --with NEW` (fork): OLD's children and session
+  subscriptions move to NEW and OLD is archived in one step. Create NEW first
+  with its own parents — OLD's parents are not copied. Refused while OLD is
+  running or in review (block it first).
+- A body is frozen at creation. If a queued card's inputs move, create a new
+  card and `replace` the old one. Comment only on a running card.
   Writing a long "ignore what the body says" comment is the recreate signal.
 - Never hold a board command in a shell variable: zsh (the terminal tool)
   does not split it and every call silently fails.
@@ -262,12 +266,16 @@ of these fixes has reached upstream NousResearch/hermes-agent yet:
 | a `tui` subscription is keyed by the session key, and context compression rotates that key | after the orchestrator's first compaction, every card created before it stops reporting into the session: no completions, no blocks (upstream issue #91037) |
 | no `board_quiescent` event | nothing says "the board ran out of work" (🏁), with the blocked and waiting cards named |
 | the reaper judges a worker by a fingerprint and a shared log | a live worker is killed as crashed, and a worker that died before its first heartbeat spends the card's retries |
+| a worker's model fallback is silent | a card walled by quota finishes on a weaker model and reads as `done`; the fork records `model_fallback` on the run, shows `· fallback A → B` in the completion, and `kanban.worker_fallback: wait` (set on impl/fix by `kanban-profiles.sh`) requeues the card as `rate_limited` instead |
+| `done` is accepted over an uncommitted tree | an impl card completes with no commit and the review reads a dirty worktree; the fork's `--completion-contract local-commit` (set on impl/fix by `kanban-card.sh`) refuses `done` until the tree is clean and HEAD moved since the run started |
+| a completion reaches the session as its first line | the orchestrator runs `show` on every completion; the fork delivers the whole run summary (up to 4000 chars) |
 
 Check the running install before relying on the session:
 `git -C ~/.hermes/hermes-agent log --oneline -1 --grep board_quiescent` prints a
 commit. Empty output means the orchestrator goes deaf after its first
 compaction. Supervise by hand then (`list`, `show`) or switch the install to
-the fork.
+the fork. `hermes kanban replace -h` answering (not an unknown command) means
+the install also has the fallback, commit and full-summary changes above.
 
 Two destinations per card:
 
@@ -284,7 +292,7 @@ What reaches the operator is truncated per event and not configurable:
 
 | Event | Delivered |
 |---|---|
-| completed | first **line** of the summary, ~200 chars |
+| completed | to the notify target: first **line** of the summary, ~200 chars; to the orchestrating session (fork): the whole run summary, up to 4000 chars, plus `· fallback A → B` when the worker switched models |
 | blocked | the reason, ~160 chars |
 | gave_up | the error, ~200 chars |
 | crashed, timed_out | no text |

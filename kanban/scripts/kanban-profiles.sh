@@ -14,11 +14,13 @@
 # --model-*     pins model.provider/model.default in that profile. Rule: the
 #               reviewer runs on a different model family than the author.
 # --fallback-*  writes a top-level fallback_providers list in that profile.
+# impl and fix get kanban.worker_fallback=wait (a quota wall requeues the card
+# instead of finishing it on a fallback model); review stays on allow.
 # Prints what it did and each profile's configured model.
 set -euo pipefail
 . "$(dirname "$0")/lib.sh"
 
-[ $# -ge 1 ] || { sed -n 2,17p "$0" >&2; exit 2; }
+[ $# -ge 1 ] || { sed -n 2,19p "$0" >&2; exit 2; }
 PREFIX="$1"; shift
 CLONE=default; REPO=""; FORCE=0
 declare -a MODELS=() FALLBACKS=()
@@ -106,6 +108,11 @@ for role in impl review fix; do
     HERMES_HOME="$dir" hermes_cli config set model.provider "${spec%%:*}" >/dev/null
     HERMES_HOME="$dir" hermes_cli config set model.default "${spec#*:}" >/dev/null
   fi
+  # Authors wait out a quota wall on their own model instead of finishing on a weaker fallback; the
+  # dispatcher requeues the card as rate_limited. The reviewer keeps the default (allow).
+  case "$role" in
+    impl|fix) HERMES_HOME="$dir" hermes_cli config set kanban.worker_fallback wait >/dev/null ;;
+  esac
   fb="$(lookup "$role" ${FALLBACKS[@]+"${FALLBACKS[@]}"})"
   if [ -n "$fb" ]; then
     case "$fb" in *:*) ;; *) kanban_die "--fallback-$role wants <provider>:<model>, got $fb" 2 ;; esac

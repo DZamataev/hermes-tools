@@ -45,6 +45,9 @@ fi
 
 ARGS=(--workspace "dir:$WORKDIR" --max-retries "$RETRIES")
 [ -n "$WHO" ] && ARGS+=(--assignee "$WHO")
+# impl/fix must leave a commit and a clean tree: the board refuses `done` otherwise.
+# research never commits (its template forbids it); review and gate change nothing.
+case "$ROLE" in impl|fix) ARGS+=(--completion-contract local-commit) ;; esac
 [ -n "${KANBAN_MAX_RUNTIME:-}" ] && [ "$ROLE" != gate ] && ARGS+=(--max-runtime "$KANBAN_MAX_RUNTIME")
 for s in ${KANBAN_SKILLS:-}; do ARGS+=(--skill "$s"); done
 for p in "$@"; do

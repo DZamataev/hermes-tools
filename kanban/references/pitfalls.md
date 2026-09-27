@@ -15,7 +15,9 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **`link` takes `parent_id child_id` positionally.** If you swap them, the
   parent waits on its own child. Read `show <child>` after each link.
 - **Archiving a card releases its children.** An archived parent no longer
-  counts as unmet. After any `archive`, re-parent the orphans.
+  counts as unmet. To swap a card, `replace OLD --with NEW` (fork) moves the
+  children and subscriptions before archiving; after a bare `archive`,
+  re-parent the orphans.
 - **Do not keep the board command in a shell variable.** zsh (the terminal
   tool) does not word-split `$B`, so each call fails while the script
   exits 0. Use a function or write the command out in full.
@@ -84,8 +86,9 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 
 ## Card bodies
 
-- **A body is frozen at creation.** If a queued card's inputs moved, archive it
-  and recreate it with edges and a subscription. Comment only on a card that is
+- **A body is frozen at creation.** If a queued card's inputs moved, create a
+  new card and `replace OLD --with NEW` (fork; OLD's parents are not copied, so
+  give NEW its own). Comment only on a card that is
   already running. If a correcting comment would run longer than the section it
   corrects, recreate the card.
 - **Long-lived cards collect stale claims.** Before convergence and final-gate
@@ -175,10 +178,11 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **A card subscribed only to the chat never reaches the orchestrator
   session.** The session learns of a block only if the card is subscribed to
   `tui:$HERMES_SESSION_KEY` too; the scripts do it, hand-made cards must.
-- **Truncation depends on the event:** completed gives the first line of the
-  summary (~200 chars), blocked the reason (~160), and crashed/timed_out no
-  text. Front-load block reasons. Keep completion summaries neutral with a
-  mechanical first line.
+- **Truncation depends on the event:** completed gives the chat the first line
+  of the summary (~200 chars) and the orchestrating session (fork) the whole
+  run summary up to 4000 chars; blocked gives the reason (~160), and
+  crashed/timed_out no text. Front-load block reasons. Keep completion
+  summaries neutral with a mechanical first line.
 - **Subscribing a card to a new chat does not remove the old one.**
   Unsubscribe the old one too and count targets.
 - **Keep chat ids out of the repo.** Secret scanners do not catch bare numeric
