@@ -1,8 +1,9 @@
 # Hermes Kanban: multi-agent development on this repo
 
 Per-repo runbook. Cards run as separate non-interactive Hermes workers, one role
-per profile; the foreground (coordinator) session plans, feeds the board and
-lands the results. Settings: `.kanban/config.env`.
+per profile; the foreground (orchestrator) session plans, feeds the board and
+lands the results. It is the board's only supervisor: every card reports back
+into it, so keep it open while the board runs. Settings: `.kanban/config.env`.
 
 <!-- Fill every <…>. Keep this file self-contained: no paths into other
 checkouts, no model ids (they change with quota). -->

@@ -74,16 +74,6 @@ if argv[:1] == ["kanban"]:
         pass
     else:
         sys.exit(f"fake hermes: unsupported kanban {cmd}")
-elif argv[:2] == ["cron", "create"]:
-    jobs_path = os.path.join(home, "cron", "jobs.json")
-    jobs = json.load(open(jobs_path)) if os.path.exists(jobs_path) else {"jobs": []}
-    jobs["jobs"].append({"id": "job1", "name": opt("--name")})
-    json.dump(jobs, open(jobs_path, "w"))
-elif argv[:2] == ["cron", "remove"]:
-    jobs_path = os.path.join(home, "cron", "jobs.json")
-    jobs = json.load(open(jobs_path))
-    jobs["jobs"] = [j for j in jobs["jobs"] if j["id"] != argv[2]]
-    json.dump(jobs, open(jobs_path, "w"))
 elif argv[:2] == ["profile", "create"]:
     d = os.path.join(home, "profiles", argv[2], "memories")
     os.makedirs(d, exist_ok=True)

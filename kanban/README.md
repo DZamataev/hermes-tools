@@ -3,8 +3,8 @@
 A [Hermes Agent](https://hermes-agent.nousresearch.com/docs) skill for building a
 project with many unattended Hermes workers on a Kanban board. One foreground
 session plans and lands work; each slice runs as **implement → blind review →
-fix**, each role in its own Hermes profile, and a monitor-gated cron job
-supervises the board overnight.
+fix**, each role in its own Hermes profile. Every card reports back into the
+orchestrating session, which lands the results as they arrive.
 
 This directory is the whole package: the method (`SKILL.md`), detailed field
 notes (`references/`), templates, and repo-agnostic scripts. It has no
@@ -12,7 +12,7 @@ dependencies outside itself.
 
 ## Requirements
 
-- Hermes Agent with the Kanban board and cron (`hermes kanban`, `hermes cron`)
+- Hermes Agent with the Kanban board (`hermes kanban`)
 - `bash`, `python3` (stdlib only), `git`
 - macOS or Linux
 
@@ -36,7 +36,6 @@ bash $K/kanban-init.sh <board-slug>          # scaffolds .kanban/, role template
 bash $K/kanban-profiles.sh <prefix>          # <prefix>impl / review / fix profiles
 hermes kanban boards create <board-slug>
 python3 $K/kanban-chain.py --title "<slice>" --task <task.md> --workdir <abs worktree>
-bash $K/kanban-coordinator.sh up             # optional overnight supervisor
 ```
 
 Then ask the agent to load the skill (`/hermes-kanban-development`) and follow
@@ -48,19 +47,19 @@ Per-repo settings live in the repository, not in the skill:
 |---|---|---|
 | `.kanban/config.env` | yes | board, profile prefix, gate command, base branch, templates dir |
 | `.kanban/notify.env` | **no** (gitignored by init) | delivery chat / thread ids |
-| `docs/agents/kanban-templates/*.md` | yes | role preambles, coordinator prompt |
+| `docs/agents/kanban-templates/*.md` | yes | role preambles |
 | `docs/hermes_kanban_development.md` | yes | the repo's own runbook |
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `SKILL.md` | the method: map → AFK cards → chains → landing, roles, gates, overnight |
+| `SKILL.md` | the method: map → AFK cards → chains → landing, roles, gates, one orchestrator |
 | `references/pitfalls.md` | short rules from real board runs, grouped by area |
-| `references/*.md` | monitor-gated supervision, upstream merges, parameter sweeps, baseline audits, per-repo runbook |
+| `references/*.md` | upstream merges, parameter sweeps, baseline audits, per-repo runbook |
 | `templates/` | scaffolds copied by `kanban-init.sh`; `card-body.md` is a card skeleton |
-| `scripts/` | `kanban-init.sh`, `kanban-profiles.sh`, `kanban-card.sh`, `kanban-chain.py`, `kanban-monitor.py`, `kanban-coordinator.sh` |
-| `tests/run.sh` | tests against a fake `hermes`; no board, profile or cron job is touched |
+| `scripts/` | `kanban-init.sh`, `kanban-profiles.sh`, `kanban-card.sh`, `kanban-chain.py` |
+| `tests/run.sh` | tests against a fake `hermes`; no board or profile is touched |
 
 ## Test
 

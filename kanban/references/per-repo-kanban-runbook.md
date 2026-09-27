@@ -1,11 +1,11 @@
 # Writing a per-repo Kanban runbook
 
 A project's runbook must be **self-contained for that repo's readers**: a
-coordinator or human opening it has neither this skill nor any sibling repo's
+orchestrator or human opening it has neither this skill nor any sibling repo's
 docs in front of them. Copy the generic procedure in (one writer per worktree,
 worktree warm-up, role profiles and memory rewrite, card preamble, blind review,
 gates, notifications with the truncation table, observation, failure modes,
-board bring-up, coordinator duties) and rewrite every example in this repo's
+board bring-up, orchestrator duties) and rewrite every example in this repo's
 terms. A "delta from `../<other-repo>/docs/...`" file is rejected by the
 operator: a path into another checkout is a dependency on a repo the reader may
 not have, and the pointer rots the day that file moves. Open the file by saying

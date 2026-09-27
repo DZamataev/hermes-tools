@@ -17,7 +17,7 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **Archiving a card releases its children.** An archived parent no longer
   counts as unmet. After any `archive`, re-parent the orphans.
 - **Do not keep the board command in a shell variable.** zsh (the terminal
-  tool, cron) does not word-split `$B`, so each call fails while the script
+  tool) does not word-split `$B`, so each call fails while the script
   exits 0. Use a function or write the command out in full.
 - **Under `set -u`, pass a list that may be empty as `${a[@]+"${a[@]}"}`.**
 - **Send card bodies on stdin (`--body-file -`).** Backticks and leading dashes
@@ -27,7 +27,7 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **`comment <id> "<text>"` is positional.** `--body` is rejected with the
   top-level usage dump.
 - **`HERMES_DELEGATED_CHILD_CONTEXT=1` blocks board writes.** A gateway-spawned
-  coordinator can inherit it. `unset` it before you mutate the board.
+  orchestrator can inherit it. `unset` it before you mutate the board.
 - **Guessed flag names fail with an empty id.** Take the settings from a
   finished sibling instead (`show <id> --json`: `assignee`, `workspace_*`,
   `max_retries`, `completion_contract`).

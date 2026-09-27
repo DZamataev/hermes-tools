@@ -14,7 +14,7 @@ metadata:
 # Development on Hermes Kanban
 
 A method for building a project with many non-interactive Hermes workers on a
-Kanban board while one foreground session (the **coordinator**, i.e. you) plans,
+Kanban board while one foreground session (the **orchestrator**, i.e. you) plans,
 feeds the board and lands the results. It works in any repository; the scripts
 next to this file are repo-agnostic and read a per-repo `.kanban/config.env`.
 
@@ -28,8 +28,6 @@ arguments. Requires `bash`, `python3` and `git`; nothing else.
 | `kanban-profiles.sh <prefix>` | creates `<prefix>impl/review/fix` profiles, rewrites their memory to role-only content, optional model pins |
 | `kanban-card.sh <role> "<title>" <task-file\|-> <workdir> [parent…]` | one card: role template + task body, profile, retries, workspace, notify subscription (+ the calling desktop/TUI session); prints the id |
 | `kanban-chain.py` | implement → review → fix triple (optionally after a parent, optionally with an operator gate), created blocked, linked, session subscription checked, head released |
-| `kanban-monitor.py` | the change-detector for a supervising cron job; stable tokens only |
-| `kanban-coordinator.sh up\|down\|status\|prompt\|drill` | installs the detector, renders the coordinator prompt, creates / removes the cron job |
 
 ## 1. When the board is worth it
 
@@ -68,7 +66,7 @@ Work item types and where they go:
    **definition constant** the repo already has (tolerance, threshold) by
    symbol and value — never let a worker invent a second one.
 4. **Cards.** Created by script only (section 5).
-5. **Landing.** The coordinator verifies and merges (section 8).
+5. **Landing.** The orchestrator verifies and merges (section 8).
 
 ## 3. Bring-up on a new repository (one turn, no setup questions)
 
@@ -109,7 +107,7 @@ git -C <repo> worktree add -b <effort>/chain <wt-root>/<effort> main
 
 | Role | Profile | Sees |
 |---|---|---|
-| coordinator | the foreground session | everything; owns the board, the map, write-protected files, merges |
+| orchestrator | the foreground session | everything; owns the board, the map, write-protected files, merges |
 | implement / research | `<prefix>impl` | the repo, the ticket, the task file |
 | adversarial review | `<prefix>review` | the diff and the repo's rules — **not** the ticket, task file, plan or author |
 | fix | `<prefix>fix` | the review findings and the implementation summary |
@@ -176,7 +174,7 @@ Board mechanics the scripts already respect (know them when working by hand):
 - A body is frozen at creation. If a queued card's inputs move, **archive and
   recreate** it (re-link edges, re-subscribe). Comment only on a running card.
   Writing a long "ignore what the body says" comment is the recreate signal.
-- Never hold a board command in a shell variable: zsh (terminal tool, cron)
+- Never hold a board command in a shell variable: zsh (the terminal tool)
   does not split it and every call silently fails.
 - `unset HERMES_DELEGATED_CHILD_CONTEXT` before board writes from a session
   that inherited it.
@@ -234,32 +232,22 @@ Board mechanics the scripts already respect (know them when working by hand):
   gate questions numbered, rejected findings named. If the next eligible card
   is a gate, launch its artifact yourself and still give the command.
 
-## 9. Unattended runs: the coordinator job
+## 9. One orchestrator per board
 
-You do not run between the operator's messages. For overnight progress, create
-a monitor-gated cron job whose woken agent has a **closed list of writes**:
+The orchestrating session is the board's only supervisor. Every card it creates
+is subscribed to it (section 10), so completions and blocks arrive in the
+session as turns and it verifies, lands and re-plans as they come. There is no
+cron supervisor: a second agent landing the same chains duplicates merges and
+map entries, and its e2e runs collide with running cards over fixed ports.
 
-```bash
-bash $K/kanban-coordinator.sh drill      # prove the detector tokens first
-bash $K/kanban-coordinator.sh up         # installs ~/.hermes/scripts/kanban_monitor_<board>.py + cron job
-bash $K/kanban-coordinator.sh down       # when the board drains — do not leave it waking on nothing
-```
-
-- The detector prints stable tokens only: `DONE:<n>`, `BLOCKED:<ids>`,
-  `STALL`, `RETRYING:<id>`, `ALL-DONE`, `BOARD-UNREADABLE`. Unchanged output
-  skips the model run, so a healthy tick costs nothing. No timestamps, sorted
-  ids.
-- Permitted: verify and merge a finished chain locally, commit research
-  outputs and map/ticket updates, unblock once after a crash the evidence
-  confirms, dispatch once on `STALL`. Forbidden: push, edit code, edit
-  write-protected files, create or archive cards, kill workers, change
-  profiles or models, touch other boards.
-- The prompt is `<templates>/coordinator.md` in the repo, rendered by the
-  script, so the job can be rebuilt from the repo alone.
-- Its output is delivered to the notify target; first line = the action needed,
-  `NOOP` when nothing needs saying. The CLI cannot restrict toolsets; when you
-  want `terminal`+`file` only, create it with `cronjob_manage` using the prompt
-  from `kanban-coordinator.sh prompt`.
+- **Keep the session open** (the desktop tab or TUI) while the board runs.
+  Unattended nights work the same way: the operator leaves the session open and
+  the machine awake.
+- **A closed session stops landing, not work.** Cards keep moving along their
+  chains; finished chains wait unlanded. On return, do the returning pass
+  (section 8) before anything else.
+- **The machine asleep stops everything.** Workers resume after wake; a suite
+  that timed out across the sleep is re-run, never trusted.
 
 ## 10. Notifications
 
@@ -304,7 +292,7 @@ per card kind, findings per review, retries.
 
 More in this skill's `references/`: `pitfalls.md` (short rules by area:
 board CLI, profiles, workspaces, card bodies, review, gates, notifications),
-`monitor-gated-supervision.md`, `per-repo-kanban-runbook.md`,
+`per-repo-kanban-runbook.md`,
 `upstream-merge-cards.md`, `external-baseline-audit-cards.md`,
 `parameter-sweep-for-blocked-decisions.md`. Card skeleton:
 `templates/card-body.md`.

@@ -9,7 +9,7 @@
   exact text in your summary and do not attempt the write.
 - Gate: `{{GATE}}` exits 0 and its output ends with `{{GATE_OK}}`. Quote the
   final lines. Run the extra suites the task names; leave the others to the
-  coordinator.
+  orchestrator.
 - TDD: a failing test first at the lowest layer that can express the
   behaviour; quote the RED output. For every new guarantee, a manual mutation
   check: break the real source line, run, quote the failure, restore, run

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for the kanban scripts. No real board, profile or cron job is touched:
+# Tests for the kanban scripts. No real board or profile is touched:
 # a fake `hermes` on PATH records every call and answers from a JSON state file.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -12,7 +12,7 @@ bad()  { printf 'FAIL %s\n' "$1"; FAILS=$((FAILS + 1)); }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
 # ---- fake hermes -----------------------------------------------------------
-mkdir -p "$SANDBOX/bin" "$SANDBOX/home/cron" "$SANDBOX/home/profiles"
+mkdir -p "$SANDBOX/bin" "$SANDBOX/home/profiles"
 export HERMES_HOME="$SANDBOX/home" FAKE_STATE="$SANDBOX/state.json" FAKE_LOG="$SANDBOX/calls.log"
 echo '{"tasks": [], "next": 1, "subs": [], "jobs": []}' > "$FAKE_STATE"
 cp "$HERE/fake_hermes.py" "$SANDBOX/bin/hermes"; chmod +x "$SANDBOX/bin/hermes"
@@ -29,7 +29,7 @@ cd "$R"
 "$S/kanban-init.sh" demo-board >/dev/null
 check "init writes config with the board" "grep -qx 'KANBAN_BOARD=demo-board' .kanban/config.env"
 check "init derives the profile prefix" "grep -qx 'KANBAN_PROFILE_PREFIX=demoboar' .kanban/config.env"
-check "init copies every role template" "for f in common research review fix gate coordinator; do test -f docs/agents/kanban-templates/\$f.md || exit 1; done"
+check "init copies every role template" "for f in common research review fix gate; do test -f docs/agents/kanban-templates/\$f.md || exit 1; done"
 check "init gitignores the notify env" "grep -qxF '.kanban/notify.env' .gitignore"
 echo "# mine" > docs/hermes_kanban_development.md
 "$S/kanban-init.sh" demo-board >/dev/null
@@ -102,20 +102,9 @@ FAKE_SUB_FAIL=tui HERMES_SESSION_KEY=sess-orch "$S/kanban-chain.py" --title "NoS
   && bad "chain stops when the session subscription fails" || ok "chain stops when the session subscription fails"
 check "chain with a failed session subscription releases nothing" "! grep -q ' unblock ' '$FAKE_LOG'"
 
-# monitor
-check "monitor drill passes" "python3 '$S/kanban-monitor.py' --drill >/dev/null"
-check "monitor reads the fake board" "python3 '$S/kanban-monitor.py' demo-board | grep -q '^DONE:0'"
-
-# coordinator
+# render
 echo "gate {{NO_SUCH_VALUE}}" > "$SANDBOX/bad.md"
 if (. "$S/lib.sh"; kanban_render "$SANDBOX/bad.md") >/dev/null 2>&1; then bad "render fails on an unknown placeholder"; else ok "render fails on an unknown placeholder"; fi
-check "coordinator prompt renders fully" "'$S/kanban-coordinator.sh' prompt | grep -q 'demo-board' && ! '$S/kanban-coordinator.sh' prompt | grep -q '{{'"
-"$S/kanban-coordinator.sh" up >/dev/null
-check "coordinator installs the detector with the board baked in" "grep -q \"BOARD = 'demo-board'\" '$HERMES_HOME/scripts/kanban_monitor_demo_board.py'"
-check "coordinator creates a monitor-gated job to the thread" "grep -q 'cron create.*--deliver telegram:-100123:9.*--monitor-script kanban_monitor_demo_board.py' '$FAKE_LOG'"
-"$S/kanban-coordinator.sh" up >/dev/null 2>&1 && bad "coordinator refuses a second job" || ok "coordinator refuses a second job"
-"$S/kanban-coordinator.sh" down >/dev/null
-check "coordinator down removes job and detector" "grep -q 'cron remove' '$FAKE_LOG' && [ ! -e '$HERMES_HOME/scripts/kanban_monitor_demo_board.py' ]"
 
 # profiles
 : > "$FAKE_LOG"

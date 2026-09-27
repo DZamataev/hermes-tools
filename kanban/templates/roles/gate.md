@@ -8,5 +8,5 @@ never completes it.
 - Questions (answer by number):
   1. <fill>
 
-The coordinator records the verdict on the ticket and runs
+The orchestrator records the verdict on the ticket and runs
 `hermes kanban --board {{BOARD}} complete <this-id> --summary "<verdict>"`.

@@ -6,7 +6,7 @@
 # Writes (each only when missing):
 #   .kanban/config.env                 board, profile prefix, gate, base branch
 #   .kanban/notify.env.example         notify target variable names, empty
-#   <templates>/{common,research,review,fix,gate,coordinator}.md   role preambles
+#   <templates>/{common,research,review,fix,gate}.md   role preambles
 #   <templates>/tasks/                 per-card task bodies live here
 #   docs/hermes_kanban_development.md  the per-repo runbook skeleton
 # and adds .kanban/notify.env to .gitignore.
@@ -47,7 +47,7 @@ put "$TPL_SRC/config.env" "$REPO/.kanban/config.env" render
 put "$TPL_SRC/notify.env.example" "$REPO/.kanban/notify.env.example"
 # shellcheck disable=SC1091
 TEMPLATES="$(set -a; . "$REPO/.kanban/config.env"; printf %s "${KANBAN_TEMPLATES:-docs/agents/kanban-templates}")"
-for f in common research review fix gate coordinator; do
+for f in common research review fix gate; do
   put "$TPL_SRC/roles/$f.md" "$REPO/$TEMPLATES/$f.md"
 done
 mkdir -p "$REPO/$TEMPLATES/tasks"
