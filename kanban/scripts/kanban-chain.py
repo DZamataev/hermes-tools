@@ -2,7 +2,7 @@
 """Create one slice as an implement -> review -> fix chain, race-free.
 
   kanban-chain.py --title "<slice>" --task <task.md> --workdir <abs worktree>
-                  [--after <id> ...] [--gate-task <gate.md>] [--hold] [--dry-run]
+                  [--after <id> ...] [--gate-task <gate.md>] [--hold] [--no-session] [--dry-run]
 
 Every card is created BLOCKED through kanban-card.sh (so each carries its role
 preamble and notify subscriptions), the edges are checked, then only the head is
@@ -13,6 +13,8 @@ Run from a desktop/TUI session, every card is also subscribed to that session
 --after      parents of the implement card (usually the previous slice's fix)
 --gate-task  add an operator gate card parented on the fix; it stays blocked
 --hold       create everything but release nothing (review the board first)
+--no-session run with no session to report to (a plain shell); without it a
+             missing HERMES_SESSION_KEY is an error, not a silent unheard chain
 
 Prints `impl=<id> review=<id> fix=<id> [gate=<id>] [session=<key>]`.
 Run it from inside the repository (or set KANBAN_REPO).
@@ -88,6 +90,7 @@ def main():
     ap.add_argument("--after", action="append", default=[])
     ap.add_argument("--gate-task")
     ap.add_argument("--hold", action="store_true")
+    ap.add_argument("--no-session", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     if not os.path.isabs(a.workdir) or not os.path.isdir(a.workdir):
@@ -96,6 +99,11 @@ def main():
         if not os.path.isfile(f):
             sys.exit(f"task file does not exist: {f}")
     os.environ.pop("HERMES_DELEGATED_CHILD_CONTEXT", None)
+    if not (a.no_session or a.dry_run or os.environ.get("HERMES_SESSION_KEY")
+            or os.environ.get("KANBAN_NOTIFY_SESSION") == "0"):
+        # A session that cannot see its own key (execute_code used to strip it) would get no word from the chain.
+        sys.exit("HERMES_SESSION_KEY is not set, so no session would hear this chain's blocks and completions. "
+                 "Run it from the terminal of the orchestrating session, or pass --no-session if nobody needs to hear.")
     board = None if a.dry_run else board_slug()
 
     import tempfile

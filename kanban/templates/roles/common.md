@@ -14,6 +14,16 @@
   behaviour; quote the RED output. For every new guarantee, a manual mutation
   check: break the real source line, run, quote the failure, restore, run
   green. No helper scripts for mutations.
+- Evidence as you go: append every RED run and every mutation's failing and
+  green output to `$TMPDIR/$HERMES_KANBAN_TASK-evidence.log` the moment you get
+  it, and build the summary from that file. Your context may be compacted
+  before the end; output you did not save is gone. Not in the tree: a stray
+  file there fails the clean-tree check at `kanban_complete`.
+- Long suites (e2e and the like) run in the background with a completion
+  notice and you wait for it: a foreground call hits the tool timeout. While
+  one runs, do not touch the tree — no mutations, no edits: a dev server
+  reloads on the change and the running tests fail for that reason, not for
+  the code. Mutations come after the suite has finished.
 - Constants that define what counts as a difference (tolerances, thresholds,
   quanta) come from the repo or the task — never invent a second one.
 - An objective obstacle (missing access, an ambiguous acceptance check, a

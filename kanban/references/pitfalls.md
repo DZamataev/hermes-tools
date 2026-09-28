@@ -56,6 +56,13 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **Two sizes of one vendor's model are not independent reviewers.** When
   quota forces a single family, say that the review is a second pass.
 - **The one-shot flag is top-level:** `hermes -p <p> -z "<prompt>"`.
+- **A free vision model with no `fallback_chain` leaves the board blind.** An
+  explicit `auxiliary.vision.provider` skips the global fallback chain, and the
+  main-model rung fails on a `custom` endpoint, so one 429 from the free model
+  means no visual acceptance at all. Give every role profile
+  `auxiliary.vision.fallback_chain` on other vendors
+  (`hermes -p <p> config set auxiliary.vision.fallback_chain '[…]'`) and prove it
+  resolves; `kanban-profiles.sh` does not set vision.
 
 ## Workspaces
 
@@ -155,6 +162,10 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **A standing authorization is recorded with what it does not cover.**
 - **Once the operator answers every few minutes, stop carding iterations.**
   Tune in the foreground and card only the final verdict.
+- **A card the acceptance contract refuses is closed with
+  `complete --force`, not archived.** `--force` overrides a failed receipt and
+  logs `acceptance_overridden` with the reason; `archive` reads as thrown away.
+  The refusal itself prints the receipt's classification and recovery.
 
 ## Running, stopping, observing
 

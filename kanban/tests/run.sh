@@ -86,14 +86,14 @@ mv .kanban/notify.env.off .kanban/notify.env
 
 # chain
 : > "$FAKE_LOG"
-OUT="$("$S/kanban-chain.py" --title "List" --task task.md --workdir "$R" --after "$ID" --gate-task task.md)"
+OUT="$("$S/kanban-chain.py" --no-session --title "List" --task task.md --workdir "$R" --after "$ID" --gate-task task.md)"
 check "chain prints four ids" "grep -Eq '^impl=t_[0-9]+ review=t_[0-9]+ fix=t_[0-9]+ gate=t_[0-9]+$' <<<'$OUT'"
 check "chain creates every card blocked" "[ \$(grep -c 'create .*--initial-status blocked' '$FAKE_LOG') = 4 ]"
 check "chain releases only after linking checks" "awk '/ unblock /{u=NR} / show /{s=NR} END{exit !(s<u)}' '$FAKE_LOG'"
 check "chain never unblocks the gate" "! grep ' unblock ' '$FAKE_LOG' | grep -q \"\$(sed 's/.*gate=//' <<<'$OUT')\""
 check "chain dispatches once" "[ \$(grep -c ' dispatch' '$FAKE_LOG') = 1 ]"
 check "review card uses the review profile" "grep -q 'create List: review .*--assignee demoreview' '$FAKE_LOG'"
-FAKE_WRONG_PARENT=1 "$S/kanban-chain.py" --title "Bad" --task task.md --workdir "$R" >/dev/null 2>&1 \
+FAKE_WRONG_PARENT=1 "$S/kanban-chain.py" --no-session --title "Bad" --task task.md --workdir "$R" >/dev/null 2>&1 \
   && bad "chain stops when an edge is wrong" || ok "chain stops when an edge is wrong"
 check "chain with a wrong edge releases nothing" "! grep -q 'unblock.*' <(sed -n '/create Bad/,\$p' '$FAKE_LOG')"
 
@@ -106,6 +106,15 @@ check "chain reports the subscribed session" "grep -q 'session=sess-orch' <<<'$O
 FAKE_SUB_FAIL=tui HERMES_SESSION_KEY=sess-orch "$S/kanban-chain.py" --title "NoSub" --task task.md --workdir "$R" >/dev/null 2>&1 \
   && bad "chain stops when the session subscription fails" || ok "chain stops when the session subscription fails"
 check "chain with a failed session subscription releases nothing" "! grep -q ' unblock ' '$FAKE_LOG'"
+# a chain launched where the session key did not reach (execute_code used to strip it) would run unheard
+: > "$FAKE_LOG"
+"$S/kanban-chain.py" --title "Deaf" --task task.md --workdir "$R" 2>"$SANDBOX/deaf.err" >/dev/null \
+  && bad "chain refuses to run without a session key" || ok "chain refuses to run without a session key"
+check "the refusal names the way out" "grep -q -- '--no-session' '$SANDBOX/deaf.err'"
+check "a refused chain creates nothing" "! grep -q ' create ' '$FAKE_LOG'"
+HERMES_SESSION_KEY=sess-tg HERMES_SESSION_PLATFORM=telegram "$S/kanban-chain.py" --title "Gw" --task task.md --workdir "$R" >/dev/null 2>&1 \
+  && ok "a gateway session (key present, deliberately not subscribed) is not refused" \
+  || bad "a gateway session (key present, deliberately not subscribed) is not refused"
 
 # render
 echo "gate {{NO_SUCH_VALUE}}" > "$SANDBOX/bad.md"
@@ -126,7 +135,7 @@ check "profiles keeps an existing memory" "grep -qx KEEP '$HERMES_HOME/profiles/
 
 # the package stands alone
 PKG="$(cd "$HERE/.." && pwd)"
-check "package names no machine-specific path" "! grep -rnE '/Users/|~/dev/|/home/[a-z]' '$PKG' --include='*.md' --include='*.sh' --include='*.py' --include='*.env' --include='*.example' | grep -v '/tests/run.sh:'"
+check "package names no machine-specific path" "! grep -rnE '/Users/|~/dev/|/home/[a-z]' '$PKG' --include='*.md' --include='*.sh' --include='*.py' --include='*.env' --include='*.example' | grep -v '/tests/run.sh:' | grep -v '/PLAN.md:'"  # PLAN.md: the work plan, install.sh does not ship it
 check "package has no symlinks" "[ -z \"\$(find '$PKG' -type l)\" ]"
 check "SKILL.md links only files inside the package" "python3 - '$PKG' <<'PY'
 import re, sys, pathlib

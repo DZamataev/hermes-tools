@@ -11,6 +11,11 @@
   reviewed.**
 - Run `{{GATE}}` yourself, plus any suite the diff's area needs. Do not trust
   the summary.
+- Long suites (e2e and the like) run in the background with a completion
+  notice and you wait for it: a foreground call hits the tool timeout. While
+  one runs, do not touch the tree — no mutations, no edits: a dev server
+  reloads on the change and the running tests fail for that reason, not for
+  the code. Mutations come after the suite has finished.
 - Look for: a test that asserts something other than what its name claims; a
   test that would survive breaking the line it guards; behaviour resting on an
   assumption nobody wrote down; layer or boundary violations; unbounded memory,

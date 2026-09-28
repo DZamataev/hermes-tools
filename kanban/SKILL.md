@@ -141,6 +141,11 @@ python3 $K/kanban-chain.py --title "Virtual list" --task <templates>/tasks/05-li
 bash $K/kanban-card.sh research "Media formats" <templates>/tasks/03-media.md <repo>
 ```
 
+Run `kanban-chain.py` from the orchestrating session's `terminal`: it subscribes
+that session (`HERMES_SESSION_KEY`) to every card and refuses to run without the
+key, since a chain nobody subscribed to runs unheard. From a plain shell with
+nobody to notify, pass `--no-session`.
+
 What every body carries (the templates hold it; do not trim them):
 
 - workspace boundary; local commits allowed; push / PR / merge / rebase /
@@ -148,11 +153,15 @@ What every body carries (the templates hold it; do not trim them):
 - read the repo's agent rules and the ticket first; write-protected files
   (`AGENTS.md`, `CLAUDE.md`) are returned as text in the summary, not written;
 - the gate command and its success line; which expensive suites the card must
-  run and which it must leave to the convergence card;
+  run and which it must leave to the convergence card; long suites in the
+  background, and no edits or mutations while one runs;
 - TDD with the RED run quoted; a **manual** mutation check for every new
-  guarantee (break the real line, see the test fail, restore);
+  guarantee (break the real line, see the test fail, restore); RED and mutation
+  output saved to a file outside the tree as it happens, not recalled at the end;
 - an objective obstacle → `kanban_block`, reason **opening with the action
-  required and the path** (the notification shows ~160 chars);
+  required and the path**;
+- a fix card with nothing to change closes with `kanban_complete` and
+  `metadata.no_change: "<why>"` on a clean tree, never with a block;
 - a **neutral** completion summary: first line exactly
   `START_HEAD..END_HEAD, N files, gate: green` and nothing about intent — the
   reviewer reconstructs intent from the diff.
