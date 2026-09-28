@@ -208,6 +208,30 @@ got, want = (open(p).read() for p in sys.argv[1:])
 sys.exit(0 if got == want else 1)
 PY"
 check "sync --apply never commits" "[ -n \"\$(git -C '$OLD' status --porcelain)\" ] && [ \$(git -C '$OLD' rev-list --count HEAD) = 2 ]"
+# a clean file missing several rules gets all of them: its own first insertion does not make it "dirty"
+MANY="$SR/many"; cp -R "$FRESH" "$MANY"
+python3 - "$MANY/docs/agents/kanban-templates/fix.md" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+for marker in ("evidence.log", "run in the background", "await_reply_minutes=10"):
+    s = re.sub(r"^- [^\n]*\n(?:  [^\n]*\n)*", lambda m: "" if marker in m.group(0) else m.group(0), s, flags=re.M)
+s = s.replace("{{BOARD}}", "demo-board")  # a real project fills its placeholders in
+open(p, "w").write(s)
+PY
+git -C "$MANY" -c user.email=t@t -c user.name=t commit -qam "three rules behind"
+APPLY="$(python3 "$SYNC" --apply "$MANY")"
+check "sync --apply adds every missing rule to one clean file" "[ \$(grep -c '^added    docs/agents/kanban-templates/fix.md' <<<'$APPLY') = 3 ] && ! grep -q skipped <<<'$APPLY' && [ \"\$(sed 's/demo-board/{{BOARD}}/' '$MANY/docs/agents/kanban-templates/fix.md')\" = \"\$(cat '$PKG/templates/roles/fix.md')\" ]"
+# a rule that extends a bullet the project has in an older form: no second copy of the bullet, a manual line
+EXT="$SR/ext"; cp -R "$FRESH" "$EXT"
+python3 - "$EXT/docs/agents/kanban-templates/fix.md" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+s = re.sub(r'  "needs decision" — or first ask.*?empty means no answer\.\n', '  "needs decision".\n', s, flags=re.S)
+open(p, "w").write(s)
+PY
+git -C "$EXT" -c user.email=t@t -c user.name=t commit -qam "older fix bullet"
+APPLY="$(python3 "$SYNC" --apply "$EXT")"
+check "sync does not duplicate a bullet the project has in an older form" "grep -q 'manual   docs/agents/kanban-templates/fix.md: extend' <<<'$APPLY' && [ \$(grep -c 'Each finding is either applied' '$EXT/docs/agents/kanban-templates/fix.md') = 1 ]"
 printf -- '- Ask: await_reply_minutes=5 when unsure.\n' >> "$OLD/docs/agents/kanban-templates/review.md"
 APPLY="$(python3 "$SYNC" --apply "$OLD" --allow-dirty)"
 check "sync reports a forbidden rule for a manual edit, never rewrites it" "grep -q 'manual   docs/agents/kanban-templates/review.md: remove the text' <<<'$APPLY' && grep -q 'await_reply_minutes=5' '$OLD/docs/agents/kanban-templates/review.md'"

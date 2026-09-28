@@ -136,8 +136,11 @@ def _bullets(text: str) -> list[tuple[int, int]]:
 
 
 def _bullet_with(text: str, marker: str) -> tuple[int, int] | None:
+    """The bullet containing ``marker``; a ``{{PLACEHOLDER}}`` in the marker matches whatever the project filled in."""
+    parts = re.split(r"\{\{[A-Z_]+\}\}", _norm(marker))
+    pattern = re.compile(".*?".join(re.escape(p) for p in parts))
     for s, e in _bullets(text):
-        if _norm(marker) in _norm(text[s:e]):
+        if pattern.search(_norm(text[s:e])):
             return s, e
     return None
 
@@ -146,7 +149,11 @@ def apply(project: Path, info: dict, rules: list[dict], allow_dirty: bool) -> li
     report = []
     by_id = {r["id"]: r for r in rules}
     order = [r["id"] for r in rules]
-    for gap in check(project, info, rules):
+    gaps = check(project, info, rules)
+    # Judged once, before this run writes anything: its own first insertion must not make the file "dirty".
+    dirty = {g["file"] for g in gaps
+             if not allow_dirty and _git(project, "status", "--porcelain", "--", str(Path(g["file"]).relative_to(project)))}
+    for gap in gaps:
         rule, role, path = by_id[gap["rule"]], gap["role"], Path(gap["file"])
         rel = path.relative_to(project)
         if rule["want"] == "absent":
@@ -158,10 +165,16 @@ def apply(project: Path, info: dict, rules: list[dict], allow_dirty: bool) -> li
         if not bullet or "{{" in bullet:
             report.append(f"manual   {rel}: add the `{rule['id']}` bullet from templates/roles/{role}.md")
             continue
-        if not allow_dirty and _git(project, "status", "--porcelain", "--", str(rel)):
+        if gap["file"] in dirty:
             report.append(f"skipped  {rel}: uncommitted changes (commit them, or pass --allow-dirty)")
             continue
         text = path.read_text()
+        head = bullet.splitlines()[0]
+        if _bullet_with(text, head):
+            # The rule extends a bullet the project already has in an older form: a second copy would contradict it.
+            report.append(f"manual   {rel}: extend the bullet starting `{head[2:60]}…` with the `{rule['id']}` rule "
+                          f"from templates/roles/{role}.md")
+            continue
         # Anchor: the bullet that precedes this one in the skill's template, matched by its first line (projects
         # keep those verbatim far more often than whole bullets); else the nearest earlier rule bullet this file
         # has; else the last bullet before `## Task`.
@@ -170,8 +183,6 @@ def apply(project: Path, info: dict, rules: list[dict], allow_dirty: bool) -> li
         idx = next(i for i, sp in enumerate(src_spans) if sp == span)
         for s, e in reversed(src_spans[:idx]):
             first = src[s:e].splitlines()[0]
-            if "{{" in first:
-                continue
             found = _bullet_with(text, first)
             if found:
                 at = found[1]
