@@ -163,5 +163,55 @@ check "install --force backs up outside skills/" "ls -d '$INST/backups/skills/he
 R2="$SANDBOX/repo2"; mkdir -p "$R2"; git -C "$R2" init -q
 check "installed copy scaffolds a repo on its own" "(cd '$R2' && bash '$IDIR/scripts/kanban-init.sh' other-board >/dev/null) && [ -f '$R2/.kanban/config.env' ]"
 
+# kanban-sync: the package's own templates satisfy every rule it checks projects against
+SYNC="$S/kanban-sync.py"
+check "every rule marker is in the package's own templates (present) or absent from them (absent)" "python3 - '$PKG' <<'PY'
+import pathlib, sys
+root = pathlib.Path(sys.argv[1])
+bad = []
+for line in (root / 'templates/rules.tsv').read_text().splitlines():
+    if not line.strip() or line.startswith('#'): continue
+    rid, roles, want, marker = line.split('\t', 3)
+    for role in roles.split(','):
+        has = marker in (root / 'templates/roles' / f'{role}.md').read_text()
+        if has != (want == 'present'): bad.append(f'{rid}:{role}')
+sys.exit(' '.join(bad) if bad else 0)
+PY"
+SR="$SANDBOX/sync-root"; mkdir -p "$SR"
+FRESH="$SR/fresh"; mkdir -p "$FRESH"; git -C "$FRESH" init -q
+(cd "$FRESH" && bash "$S/kanban-init.sh" fresh-board >/dev/null)
+git -C "$FRESH" add -A && git -C "$FRESH" -c user.email=t@t -c user.name=t commit -qm init
+OUT="$(python3 "$SYNC" --root "$SR")"
+check "sync: a project scaffolded from this package is up to date" "grep -q 'role templates up to date' <<<'$OUT' && ! grep -q missing <<<'$OUT'"
+# an older project: templates without the ask rule
+OLD="$SR/old"; cp -R "$FRESH" "$OLD"
+python3 - "$OLD/docs/agents/kanban-templates" <<'PY'
+import pathlib, re, sys
+d = pathlib.Path(sys.argv[1])
+for role in ("common", "fix", "research"):
+    p = d / f"{role}.md"
+    s = p.read_text()
+    s = re.sub(r"^- [^\n]*\n(?:  [^\n]*\n)*", lambda m: "" if "await_reply_minutes=10" in m.group(0) else m.group(0), s, flags=re.M)
+    p.write_text(s)
+PY
+git -C "$OLD" -c user.email=t@t -c user.name=t commit -qam "older method"
+OUT="$(python3 "$SYNC" --root "$SR")"
+check "sync finds every project under the root" "grep -q '$FRESH ' <<<'$OUT' && grep -q '$OLD ' <<<'$OUT'"
+check "sync names the missing rule per role" "[ \$(grep -c 'missing   ask-and-wait' <<<'$OUT') = 3 ]"
+echo "local edit" >> "$OLD/docs/agents/kanban-templates/research.md"
+APPLY="$(python3 "$SYNC" --apply "$OLD")"
+check "sync --apply adds the rule to clean templates" "grep -q 'added    docs/agents/kanban-templates/common.md: ask-and-wait' <<<'$APPLY' && grep -q 'await_reply_minutes=10' '$OLD/docs/agents/kanban-templates/fix.md'"
+check "sync --apply leaves a template with uncommitted changes alone" "grep -q 'skipped  docs/agents/kanban-templates/research.md' <<<'$APPLY' && ! grep -q 'await_reply_minutes=10' '$OLD/docs/agents/kanban-templates/research.md'"
+check "sync --apply puts the bullet where the package has it" "python3 - '$OLD/docs/agents/kanban-templates/common.md' '$PKG/templates/roles/common.md' <<'PY'
+import sys
+got, want = (open(p).read() for p in sys.argv[1:])
+sys.exit(0 if got == want else 1)
+PY"
+check "sync --apply never commits" "[ -n \"\$(git -C '$OLD' status --porcelain)\" ] && [ \$(git -C '$OLD' rev-list --count HEAD) = 2 ]"
+printf -- '- Ask: await_reply_minutes=5 when unsure.\n' >> "$OLD/docs/agents/kanban-templates/review.md"
+APPLY="$(python3 "$SYNC" --apply "$OLD" --allow-dirty)"
+check "sync reports a forbidden rule for a manual edit, never rewrites it" "grep -q 'manual   docs/agents/kanban-templates/review.md: remove the text' <<<'$APPLY' && grep -q 'await_reply_minutes=5' '$OLD/docs/agents/kanban-templates/review.md'"
+check "sync --allow-dirty fills the dirty template too" "grep -q 'await_reply_minutes=10' '$OLD/docs/agents/kanban-templates/research.md'"
+
 echo
 [ "$FAILS" = 0 ] && echo "all kanban tests passed" || { echo "$FAILS failed"; exit 1; }

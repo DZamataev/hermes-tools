@@ -28,6 +28,7 @@ arguments. Requires `bash`, `python3` and `git`; nothing else.
 | `kanban-profiles.sh <prefix>` | creates `<prefix>impl/review/fix` profiles, rewrites their memory to role-only content, optional model pins |
 | `kanban-card.sh <role> "<title>" <task-file\|-> <workdir> [parent…]` | one card: role template + task body, profile, retries, workspace, notify subscription (+ the calling desktop/TUI session); prints the id |
 | `kanban-chain.py` | implement → review → fix triple (optionally after a parent, optionally with an operator gate), created blocked, linked, session subscription checked, head released |
+| `kanban-sync.py [--root DIR]` / `--apply PROJECT` | finds every kanban project under a root (default `~/dev`) and reports which method rules its role templates lack; `--apply` inserts them (section 13) |
 
 ## 1. When the board is worth it
 
@@ -330,6 +331,35 @@ ids (they change with quota — record the rule and the check commands instead).
 Record standing authorizations the operator grants twice, with what they do
 **not** cover. After the first chain, fill the calibration section: wall time
 per card kind, findings per review, retries.
+
+## 13. Bringing projects up to the method
+
+A change to this skill reaches a project by two roads, and only one of them is
+automatic. Scripts are read from the installed skill, so `install.sh --force`
+updates every project that calls them. Role templates were **copied** into
+each project by `kanban-init.sh`, and cards are built from those copies: a new
+rule in `templates/roles/` changes nothing until it is in the project's copy.
+
+After changing the templates (or when asked to "update the projects"):
+
+1. Record the new rule in `templates/rules.tsv` (id, roles, `present`/`absent`,
+   a marker substring of its bullet). The suite fails when a marker is not in
+   the package's own template, so the two cannot drift.
+2. `install.sh --force`, then `kanban-sync.py` — the report: every project
+   (worktrees included), which kind it is (`skill` = on these scripts; `own` =
+   its own card script, which none of the script changes reach — say so to the
+   operator), and the missing or forbidden rules per role.
+3. For each project, before `--apply`: its board must not have a chain half
+   built on the old templates that the change would split (check `hermes
+   kanban --board <b> list`), and uncommitted template edits belong to the
+   operator — `--apply` skips such files; merge the bullet by hand or ask.
+4. `kanban-sync.py --apply <project>` inserts each missing bullet verbatim, in
+   the position it has in this skill's template. It never commits: show the
+   diff, commit on the operator's word, and apply to each worktree separately
+   (a worktree's templates are on its branch).
+5. `manual` lines (a bullet with a `{{PLACEHOLDER}}`, a forbidden rule the
+   project carries, a file with no anchor) are yours to edit by hand. Re-run
+   the report until it says "role templates up to date".
 
 More in this skill's `references/`: `pitfalls.md` (short rules by area:
 board CLI, profiles, workspaces, card bodies, review, gates, notifications),

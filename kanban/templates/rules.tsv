@@ -1,0 +1,15 @@
+# Methodology rules a project's role templates must carry, checked by kanban-sync.py.
+# One rule per line, tab-separated:
+#   id	roles	want	marker
+# roles: comma-separated template names (common = the implement card).
+# want:  present — the project's copy must contain the marker;
+#        absent  — it must not (a rule that would break the role).
+# marker: a literal substring of the rule's bullet in templates/roles/<role>.md, specific enough that a project
+#         which paraphrased the rest of the bullet still matches. The package's own templates must satisfy every
+#         line (tests/run.sh checks it), so a marker cannot drift away from the text it stands for.
+evidence-log	common,fix	present	$HERMES_KANBAN_TASK-evidence.log
+long-suites	common,fix,review	present	run in the background with a completion
+no-change	fix	present	"no_change":
+ask-and-wait	common,fix,research	present	await_reply_minutes=10
+reviewer-blind-ask	review	present	Do not ask the orchestrator about intent
+reviewer-never-told-to-ask	review	absent	await_reply_minutes=
