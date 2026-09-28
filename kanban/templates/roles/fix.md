@@ -10,7 +10,10 @@
   a mutation check for that test) or rejected with proof — command output or
   the line of code that refutes it. A finding that argues with a written
   decision (decision records, glossary) is not applied; return it as
-  "needs decision".
+  "needs decision" — or first ask the orchestrator on your card and wait:
+  `kanban_comment(task_id=$HERMES_KANBAN_TASK, body="<finding, the decision
+  needed, your default>", await_reply_minutes=10)`; the reply comes back in
+  `replies`, empty means no answer.
 - When a finding describes a symptom, fix every path that produces it, not
   only the one cited.
 - Two failed attempts on one finding: stop on it, record it, move on.

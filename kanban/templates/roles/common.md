@@ -26,6 +26,12 @@
   the code. Mutations come after the suite has finished.
 - Constants that define what counts as a difference (tolerances, thresholds,
   quanta) come from the repo or the task — never invent a second one.
+- A question only the orchestrator can settle (which of two readings of the
+  ticket, a naming or UX choice): ask on your own card and wait —
+  `kanban_comment(task_id=$HERMES_KANBAN_TASK, body="<question + the default
+  you would pick>", await_reply_minutes=10)`. The reply comes back in `replies`;
+  empty means no answer: proceed on the default and note it in the summary, or
+  block if you cannot. Do not ask what the repo or the ticket already answers.
 - An objective obstacle (missing access, an ambiguous acceptance check, a
   contradiction with a decision record): `kanban_block` with a reason that
   **starts with the action required and the path**. Do not guess a workaround.

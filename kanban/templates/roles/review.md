@@ -11,6 +11,9 @@
   reviewed.**
 - Run `{{GATE}}` yourself, plus any suite the diff's area needs. Do not trust
   the summary.
+- Do not ask the orchestrator about intent (`kanban_comment` with
+  `await_reply_minutes`): the answer would unblind you. An intent you cannot
+  reconstruct from the diff is itself a finding.
 - Long suites (e2e and the like) run in the background with a completion
   notice and you wait for it: a foreground call hits the tool timeout. While
   one runs, do not touch the tree — no mutations, no edits: a dev server

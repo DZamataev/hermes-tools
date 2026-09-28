@@ -239,6 +239,12 @@ Board mechanics the scripts already respect (know them when working by hand):
   blocked?" — it is theirs by design. A verdict splits three ways; sweep all
   three in one turn: accepted parts (complete the gate), a stated design rule
   (docs commit on the base branch, now), defects (a new chain + a new gate).
+- **A worker's question (❓)** arrives in your session while that worker holds
+  its run waiting (up to the minutes it named). Answer at once with
+  `hermes kanban --board <board> comment <id> "<answer>"`; the comment reaches the
+  running worker within seconds. Answer from the ticket and decision records;
+  a product or design question goes to the operator first. No answer in time is
+  not a failure: the worker proceeds on its stated default or blocks.
 - **Returning to a board** ("status"): list, read `Latest summary:` of every
   card that finished, run the gate in each finished chain, land it, then answer:
   one line per slice (what landed, elapsed, findings, tests before → after),
