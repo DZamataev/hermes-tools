@@ -273,9 +273,15 @@ map entries, and its e2e runs collide with running cards over fixed ports.
 
 ### Hermes build
 
-Session delivery works only on a Hermes built from the `develop` branch of the
-fork [DZamataev/hermes-agent](https://github.com/DZamataev/hermes-agent). None
-of these fixes has reached upstream NousResearch/hermes-agent yet:
+The whole method — not only session delivery — runs on a Hermes built from the
+`develop` branch of the fork
+[DZamataev/hermes-agent](https://github.com/DZamataev/hermes-agent), with this
+skill installed from [DZamataev/hermes-tools](https://github.com/DZamataev/hermes-tools).
+`kanban-card.sh` (and so `kanban-chain.py`) refuses to create a card when
+`hermes kanban create --help` does not know the `local-commit-or-none`
+contract, naming both repositories; every per-repo runbook states the same
+requirement in its **Stack** section (`kanban-sync.py` reports one that does
+not). None of these fixes has reached upstream NousResearch/hermes-agent yet:
 
 | Without the fork | Consequence |
 |---|---|

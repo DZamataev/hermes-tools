@@ -29,6 +29,9 @@ from pathlib import Path
 SKILL_DIR = Path(__file__).resolve().parent.parent
 ROLES_DIR = SKILL_DIR / "templates" / "roles"
 RULES_FILE = SKILL_DIR / "templates" / "rules.tsv"
+# The runbook must say which Hermes and which tools the method needs (templates/runbook.md, "Stack").
+STACK_URLS = ("github.com/DZamataev/hermes-agent", "github.com/DZamataev/hermes-tools")
+CARD_TOOLS = ("scripts/kanban-card.sh", "scripts/kanban.mjs", "scripts/kanban-chain.py")
 SKIP_DIRS = {"node_modules", ".git", "build", "dist", ".venv", "venv", "Pods", "DerivedData", ".gradle"}
 MARKERS = (".kanban/config.env", ".kanban/config.json", "docs/hermes_kanban_development.md")
 TEMPLATE_DIRS = ("docs/agents/kanban-templates", "docs/agents/kanban")
@@ -97,8 +100,12 @@ def describe(project: Path) -> dict:
         info["board"] = ""
         templates = next((d for d in TEMPLATE_DIRS if (project / d).is_dir()), "")
     info["templates"] = templates
-    card = project / "scripts" / "kanban-card.sh"
-    info["own_card_script"] = bool(card.is_file() and "hermes-kanban-development" not in card.read_text())
+    # A card tool of the project's own (not a thin wrapper over the installed skill) does not get the skill's
+    # script changes: contracts, subscriptions, chain checks, the stack check.
+    info["own_card_tools"] = [t for t in CARD_TOOLS if (project / t).is_file()
+                              and "hermes-kanban-development" not in (project / t).read_text()]
+    runbook = project / "docs" / "hermes_kanban_development.md"
+    info["runbook_names_stack"] = runbook.is_file() and all(u in runbook.read_text() for u in STACK_URLS)
     return info
 
 
@@ -243,8 +250,10 @@ def main() -> int:
             print("  no role templates found")
         else:
             print(f"  templates {r['templates']}" + ("  (uncommitted changes)" if r["dirty_templates"] else ""))
-        if r["own_card_script"]:
-            print("  own scripts/kanban-card.sh: contracts, subscriptions and chain checks of the skill do not apply")
+        for tool in r["own_card_tools"]:
+            print(f"  own card tool {tool}: the skill's contracts, subscriptions, chain and stack checks do not reach it")
+        if not r["runbook_names_stack"]:
+            print("  runbook does not name the required stack (the fork and hermes-tools): see templates/runbook.md, Stack")
         for g in r["gaps"]:
             verb = "missing" if g["want"] == "present" else "forbidden"
             print(f"  {verb:9} {g['rule']:28} {g['role']}.md")

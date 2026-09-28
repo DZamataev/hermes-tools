@@ -5,6 +5,7 @@ Only the subcommands the kanban scripts use are implemented. Knobs:
 FAKE_NO_ID=1          create --json returns no id
 FAKE_WRONG_PARENT=1   show --json reports no parents
 FAKE_SUB_FAIL=<p>     notify-subscribe for platform <p> fails
+FAKE_UPSTREAM=1       `kanban create --help` lacks the fork's completion contracts (an upstream hermes)
 """
 import json
 import os
@@ -36,6 +37,10 @@ if argv[:1] == ["kanban"]:
     if rest[:1] == ["--board"]:
         rest = rest[2:]
     cmd = rest[0]
+    if cmd == "create" and "--help" in rest:
+        contracts = "" if os.environ.get("FAKE_UPSTREAM") else "local-only, local-commit, local-commit-or-none"
+        print(f"usage: hermes kanban create [--completion-contract CONTRACT] title\n  {contracts}")
+        sys.exit(0)
     if cmd == "create":
         body = sys.stdin.read() if opt("--body-file") == "-" else ""
         if os.environ.get("FAKE_NO_ID"):

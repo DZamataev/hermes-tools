@@ -59,6 +59,11 @@ check "research and review cards carry no contract" "! grep -E 'create C-(resear
 body_of() { python3 -c 'import json,sys;print(next(t["body"] for t in json.load(open(sys.argv[1]))["tasks"] if t["title"]==sys.argv[2]))' "$FAKE_STATE" "$1"; }
 check "impl, fix and research cards tell how to ask the orchestrator and wait" "grep -q 'await_reply_minutes=10' <<<\"\$BODY\" && body_of C-fix | grep -q 'await_reply_minutes=10' && body_of C-research | grep -q 'await_reply_minutes=10'"
 check "a review card forbids asking about intent" "body_of C-review | grep -q 'Do not ask the orchestrator about intent' && ! body_of C-review | grep -q 'await_reply_minutes='"
+# the stack: a hermes without the fork's kanban (upstream) is refused before anything is created
+: > "$FAKE_LOG"
+if FAKE_UPSTREAM=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>"$SANDBOX/upstream.err"; then bad "card refuses a hermes without the fork's kanban"; else ok "card refuses a hermes without the fork's kanban"; fi
+check "the refusal names the fork and the tools repository" "grep -q 'github.com/DZamataev/hermes-agent' '$SANDBOX/upstream.err' && grep -q 'github.com/DZamataev/hermes-tools' '$SANDBOX/upstream.err'"
+check "a refused card creates nothing" "! grep ' create ' '$FAKE_LOG' | grep -vq -- '--help'"
 if "$S/kanban-card.sh" impl "x" task.md "$R" "" >/dev/null 2>&1; then bad "card refuses an empty parent"; else ok "card refuses an empty parent"; fi
 if "$S/kanban-card.sh" impl "x" task.md relative/path >/dev/null 2>&1; then bad "card refuses a relative workdir"; else ok "card refuses a relative workdir"; fi
 FAKE_NO_ID=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1 && bad "card fails when create returns no id" || ok "card fails when create returns no id"
@@ -114,7 +119,7 @@ check "chain with a failed session subscription releases nothing" "! grep -q ' u
 "$S/kanban-chain.py" --title "Deaf" --task task.md --workdir "$R" 2>"$SANDBOX/deaf.err" >/dev/null \
   && bad "chain refuses to run without a session key" || ok "chain refuses to run without a session key"
 check "the refusal names the way out" "grep -q -- '--no-session' '$SANDBOX/deaf.err'"
-check "a refused chain creates nothing" "! grep -q ' create ' '$FAKE_LOG'"
+check "a refused chain creates nothing" "! grep ' create ' '$FAKE_LOG' | grep -vq -- '--help'"
 HERMES_SESSION_KEY=sess-tg HERMES_SESSION_PLATFORM=telegram "$S/kanban-chain.py" --title "Gw" --task task.md --workdir "$R" >/dev/null 2>&1 \
   && ok "a gateway session (key present, deliberately not subscribed) is not refused" \
   || bad "a gateway session (key present, deliberately not subscribed) is not refused"
@@ -236,6 +241,20 @@ printf -- '- Ask: await_reply_minutes=5 when unsure.\n' >> "$OLD/docs/agents/kan
 APPLY="$(python3 "$SYNC" --apply "$OLD" --allow-dirty)"
 check "sync reports a forbidden rule for a manual edit, never rewrites it" "grep -q 'manual   docs/agents/kanban-templates/review.md: remove the text' <<<'$APPLY' && grep -q 'await_reply_minutes=5' '$OLD/docs/agents/kanban-templates/review.md'"
 check "sync --allow-dirty fills the dirty template too" "grep -q 'await_reply_minutes=10' '$OLD/docs/agents/kanban-templates/research.md'"
+# the stack requirement: a runbook scaffolded now names the fork and the tools; an older one is reported
+OUT="$(python3 "$SYNC" --root "$SR")"
+check "sync: a fresh runbook states the stack" "! grep -A12 '$FRESH ' <<<'$OUT' | grep -q 'runbook does not name'"
+python3 - "$OLD/docs/hermes_kanban_development.md" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+open(p, "w").write(re.sub(r"## Stack \(required\).*?(?=\n## )", "", s, flags=re.S))
+PY
+OUT="$(python3 "$SYNC" --root "$SR")"
+check "sync reports a runbook that does not name the fork and the tools" "grep -A14 '$OLD ' <<<'$OUT' | grep -q 'runbook does not name the required stack'"
+# a project running its own card tool (not a wrapper over the skill) is reported as such
+mkdir -p "$OLD/scripts"; printf '#!/usr/bin/env node\n// creates cards\n' > "$OLD/scripts/kanban.mjs"
+python3 "$SYNC" --root "$SR" > "$SANDBOX/sync.out"  # a file: the report has quotes that break check's eval
+check "sync reports a project's own card tool" "grep -A14 '$OLD ' '$SANDBOX/sync.out' | grep -q 'own card tool scripts/kanban.mjs'"
 
 echo
 [ "$FAILS" = 0 ] && echo "all kanban tests passed" || { echo "$FAILS failed"; exit 1; }

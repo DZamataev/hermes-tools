@@ -8,6 +8,24 @@ into it, so keep it open while the board runs. Settings: `.kanban/config.env`.
 <!-- Fill every <…>. Keep this file self-contained: no paths into other
 checkouts, no model ids (they change with quota). -->
 
+## Stack (required)
+
+This method runs only on:
+
+- **Hermes from the `develop` branch of the fork
+  <https://github.com/DZamataev/hermes-agent>.** Upstream Hermes lacks what the
+  cards rely on: completion contracts (`local-commit`, `local-commit-or-none`),
+  whole summaries and block reasons in the session, delivery that survives the
+  orchestrator's context compression, the idle-board line, and a worker's
+  question to the orchestrator (`kanban_comment` with `await_reply_minutes`).
+- **The kanban scripts and role templates from
+  <https://github.com/DZamataev/hermes-tools>** (`kanban/install.sh --force`
+  installs them as the `hermes-kanban-development` skill).
+
+The card scripts refuse to create a card on a Hermes without these features.
+After updating either, bring this repository's copy of the role templates up
+to date: `python3 <skill>/scripts/kanban-sync.py --apply <this repo>`.
+
 ## When the board is worth it
 
 A ticket goes on the board when it is AFK and its acceptance checks are

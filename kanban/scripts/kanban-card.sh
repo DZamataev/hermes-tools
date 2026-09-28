@@ -17,6 +17,7 @@ set -euo pipefail
 if [ $# -lt 4 ]; then sed -n 2,14p "$0" >&2; exit 2; fi
 ROLE="$1"; TITLE="$2"; TASK="$3"; WORKDIR="$4"; shift 4
 kanban_load_config
+kanban_require_stack
 export WORKDIR
 
 P="$KANBAN_PROFILE_PREFIX"

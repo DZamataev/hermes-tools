@@ -93,5 +93,18 @@ PY
 # alone is not enough, since BASH_ENV may re-prepend the real one in children).
 hermes_cli() { "${KANBAN_HERMES:-hermes}" "$@"; }
 
+KANBAN_FORK_URL="https://github.com/DZamataev/hermes-agent"
+KANBAN_TOOLS_URL="https://github.com/DZamataev/hermes-tools"
+
+# This method runs on the fork's kanban (completion contracts, session delivery, worker questions); an upstream
+# hermes would create cards that silently lack them. The newest capability the scripts pass on every card is the
+# probe: `kanban create --help` must know the `local-commit-or-none` contract.
+kanban_require_stack() {
+  hermes_cli kanban create --help 2>/dev/null | grep -q 'local-commit-or-none' && return 0
+  kanban_die "this hermes lacks the kanban features the method relies on. Install Hermes from the develop branch of
+  $KANBAN_FORK_URL and the kanban scripts from
+  $KANBAN_TOOLS_URL (kanban/install.sh --force), then retry."
+}
+
 # hermes refuses board writes when this leaks in from a parent session.
 unset HERMES_DELEGATED_CHILD_CONTEXT
