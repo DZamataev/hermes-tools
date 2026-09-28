@@ -38,7 +38,11 @@ if argv[:1] == ["kanban"]:
         rest = rest[2:]
     cmd = rest[0]
     if cmd == "create" and "--help" in rest:
-        contracts = "" if os.environ.get("FAKE_UPSTREAM") else "local-only, local-commit, local-commit-or-none"
+        # Wrapped the way argparse wraps the real help: the contract name is split across lines.
+        contracts = "" if os.environ.get("FAKE_UPSTREAM") else (
+            "local-only (default), local-commit (done needs a clean\n"
+            "                        tree and a commit made during the run), local-commit-\n"
+            "                        or-none (the same, or a clean unmoved tree)")
         print(f"usage: hermes kanban create [--completion-contract CONTRACT] title\n  {contracts}")
         sys.exit(0)
     if cmd == "create":
