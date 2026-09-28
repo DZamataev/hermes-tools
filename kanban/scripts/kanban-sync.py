@@ -176,7 +176,9 @@ def apply(project: Path, info: dict, rules: list[dict], allow_dirty: bool) -> li
             report.append(f"skipped  {rel}: uncommitted changes (commit them, or pass --allow-dirty)")
             continue
         text = path.read_text()
-        head = bullet.splitlines()[0]
+        # The bullet's opening words (its subject: "Each finding is either applied"); projects reword the rest of
+        # the line, rarely the subject.
+        head = " ".join(bullet.splitlines()[0].split()[:6])
         if _bullet_with(text, head):
             # The rule extends a bullet the project already has in an older form: a second copy would contradict it.
             report.append(f"manual   {rel}: extend the bullet starting `{head[2:60]}…` with the `{rule['id']}` rule "

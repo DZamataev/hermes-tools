@@ -237,6 +237,18 @@ PY
 git -C "$EXT" -c user.email=t@t -c user.name=t commit -qam "older fix bullet"
 APPLY="$(python3 "$SYNC" --apply "$EXT")"
 check "sync does not duplicate a bullet the project has in an older form" "grep -q 'manual   docs/agents/kanban-templates/fix.md: extend' <<<'$APPLY' && [ \$(grep -c 'Each finding is either applied' '$EXT/docs/agents/kanban-templates/fix.md') = 1 ]"
+# ...even when the project reworded the rest of that bullet's first line
+EXT2="$SR/ext2"; cp -R "$FRESH" "$EXT2"
+python3 - "$EXT2/docs/agents/kanban-templates/fix.md" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p).read()
+s = re.sub(r"- Each finding is either applied \(with a test.*?empty means no answer\.\n",
+           "- Each finding is either applied — with a test when it is about behaviour — or\n  rejected with proof.\n", s, flags=re.S)
+open(p, "w").write(s)
+PY
+git -C "$EXT2" -c user.email=t@t -c user.name=t commit -qam "reworded fix bullet"
+APPLY="$(python3 "$SYNC" --apply "$EXT2")"
+check "sync does not duplicate a reworded bullet" "grep -q 'manual   docs/agents/kanban-templates/fix.md: extend' <<<'$APPLY' && [ \$(grep -c 'Each finding is either applied' '$EXT2/docs/agents/kanban-templates/fix.md') = 1 ]"
 printf -- '- Ask: await_reply_minutes=5 when unsure.\n' >> "$OLD/docs/agents/kanban-templates/review.md"
 APPLY="$(python3 "$SYNC" --apply "$OLD" --allow-dirty)"
 check "sync reports a forbidden rule for a manual edit, never rewrites it" "grep -q 'manual   docs/agents/kanban-templates/review.md: remove the text' <<<'$APPLY' && grep -q 'await_reply_minutes=5' '$OLD/docs/agents/kanban-templates/review.md'"
