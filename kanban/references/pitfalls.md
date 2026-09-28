@@ -163,9 +163,13 @@ what to do. `SKILL.md` has the method; this file is for looking up one problem.
 - **Once the operator answers every few minutes, stop carding iterations.**
   Tune in the foreground and card only the final verdict.
 - **A card the acceptance contract refuses is closed with
-  `complete --force`, not archived.** `--force` overrides a failed receipt and
-  logs `acceptance_overridden` with the reason; `archive` reads as thrown away.
-  The refusal itself prints the receipt's classification and recovery.
+  `complete --override-acceptance`, not archived.** It completes past the
+  failed receipt and logs `acceptance_overridden`; `archive` reads as thrown
+  away. `--force` alone only overrides the live-claim guard. The refusal prints
+  the receipt's classification and recovery.
+- **Only fix cards may close with `metadata.no_change`** (contract
+  `local-commit-or-none`, set by `kanban-card.sh`). An implementation card is
+  `local-commit`: no commit, no `done`.
 
 ## Running, stopping, observing
 
