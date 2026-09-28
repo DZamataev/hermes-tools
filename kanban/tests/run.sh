@@ -58,7 +58,7 @@ check "fix card may close a clean review without a commit" "grep 'create C-fix '
 check "research and review cards carry no contract" "! grep -E 'create C-(research|review) ' '$FAKE_LOG' | grep -q -- '--completion-contract'"
 body_of() { python3 -c 'import json,sys;print(next(t["body"] for t in json.load(open(sys.argv[1]))["tasks"] if t["title"]==sys.argv[2]))' "$FAKE_STATE" "$1"; }
 check "impl, fix and research cards tell how to ask the orchestrator and wait" "grep -q 'await_reply_minutes=10' <<<\"\$BODY\" && body_of C-fix | grep -q 'await_reply_minutes=10' && body_of C-research | grep -q 'await_reply_minutes=10'"
-check "a review card forbids asking about intent" "body_of C-review | grep -q 'Do not ask the orchestrator about intent'"
+check "a review card forbids asking about intent" "body_of C-review | grep -q 'Do not ask the orchestrator about intent' && ! body_of C-review | grep -q 'await_reply_minutes='"
 if "$S/kanban-card.sh" impl "x" task.md "$R" "" >/dev/null 2>&1; then bad "card refuses an empty parent"; else ok "card refuses an empty parent"; fi
 if "$S/kanban-card.sh" impl "x" task.md relative/path >/dev/null 2>&1; then bad "card refuses a relative workdir"; else ok "card refuses a relative workdir"; fi
 FAKE_NO_ID=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1 && bad "card fails when create returns no id" || ok "card fails when create returns no id"
