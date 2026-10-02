@@ -38,8 +38,18 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 [[ -x "$ROOT/plugins/provider-limits/tests/run.sh" ]] ||
   fail "provider-limits test bench is missing or not executable"
 [[ -f "$ROOT/kanban/SKILL.md" ]] || fail "kanban skill is missing"
-for script in kanban-init.sh kanban-profiles.sh kanban-card.sh kanban-chain.py kanban-monitor.py kanban-coordinator.sh; do
+for script in kanban-init.sh kanban-profiles.sh kanban-card.sh kanban-chain.py kanban-sync.py; do
   [[ -x "$ROOT/kanban/scripts/$script" ]] || fail "kanban/scripts/$script is missing or not executable"
+done
+# The cron coordinator was retired (283e8f7): the orchestrating session is the
+# board's only supervisor, and a second one duplicated merges and collided with
+# running cards. Its pieces must not come back.
+for obsolete in \
+  "$ROOT/kanban/scripts/kanban-monitor.py" \
+  "$ROOT/kanban/scripts/kanban-coordinator.sh" \
+  "$ROOT/kanban/templates/roles/coordinator.md" \
+  "$ROOT/kanban/references/monitor-gated-supervision.md"; do
+  [[ ! -e "$obsolete" ]] || fail "retired kanban coordinator path remains: $obsolete"
 done
 
 for obsolete in \
