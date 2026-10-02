@@ -3,6 +3,9 @@
 Local macOS tooling for running Hermes WebUI and keeping Hermes Desktop
 plugins installed.
 
+Setting up the whole stack from scratch (the Hermes fork, TeamClaude on a VPS,
+codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
+
 ## Layout
 
 - `hermes-webui/` — pinned Git submodule for
