@@ -46,6 +46,18 @@ reports container state separately from connector readiness. `make stop` uses
 `docker compose stop`, preserving both `hermes_open-webui` and bridge data for
 the next launch.
 
+To recreate only the OpenWebUI chats mirrored from Hermes, first make sure
+Hermes Desktop and its Read API on port `8642` are running, then use:
+
+```bash
+make reset-history
+```
+
+The command requires typing `RESET`, stops only `bridge-service`, deletes only
+chats carrying a non-empty `hermes_lineage_key`, preserves unrelated chats and
+all OpenWebUI settings, and rebuilds the mirrors from authoritative Hermes
+history. The bridge is restarted automatically if the reset is interrupted.
+
 The isolated Docker integration check is opt-in:
 
 ```bash

@@ -116,6 +116,63 @@ async def test_reads_installed_hermes_data_envelope_and_field_names():
     assert [message.created_at for message in messages] == [41, 42]
 
 
+async def test_read_messages_preserves_structured_tool_and_reasoning_metadata():
+    client = HermesReadClient(
+        "http://hermes",
+        "secret",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "assistant-1",
+                            "role": "assistant",
+                            "content": "Checking the repository.",
+                            "reasoning_content": "I need to inspect the current state.",
+                            "tool_calls": [
+                                {
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "terminal",
+                                        "arguments": "{\"command\":\"git status --short\"}",
+                                    },
+                                }
+                            ],
+                            "timestamp": 10,
+                        },
+                        {
+                            "id": "tool-1",
+                            "role": "tool",
+                            "content": "{\"output\":\"\",\"exit_code\":0}",
+                            "tool_call_id": "call-1",
+                            "tool_name": "terminal",
+                            "timestamp": 11,
+                        },
+                    ]
+                },
+            )
+        ),
+    )
+
+    messages = await client.read_messages("session-1", "default")
+
+    assert messages[0].reasoning == "I need to inspect the current state."
+    assert messages[0].tool_calls == (
+        {
+            "id": "call-1",
+            "type": "function",
+            "function": {
+                "name": "terminal",
+                "arguments": "{\"command\":\"git status --short\"}",
+            },
+        },
+    )
+    assert messages[1].tool_call_id == "call-1"
+    assert messages[1].tool_name == "terminal"
+
+
 async def test_read_messages_normalizes_installed_numeric_ids_in_order():
     client = HermesReadClient(
         "http://hermes",

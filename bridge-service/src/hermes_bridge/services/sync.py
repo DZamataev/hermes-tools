@@ -28,6 +28,7 @@ from hermes_bridge.domain.models import (
     SessionMapping,
 )
 from hermes_bridge.hermes.events import EventKind, normalize_event
+from hermes_bridge.hermes.projection import PROJECTION_VERSION
 from hermes_bridge.openwebui.mirror import MirrorResult
 
 
@@ -295,7 +296,12 @@ class SyncService:
                                 identity.lineage_key
                             )
                             current = await self._mappings.upsert_session(identity)
-                            revision = session.revision
+                            source_revision = session.revision
+                            revision = (
+                                f"projection-v{PROJECTION_VERSION}:{source_revision}"
+                                if source_revision is not None
+                                else None
+                            )
                             unchanged = (
                                 previous is not None
                                 and previous.openwebui_chat_id is not None

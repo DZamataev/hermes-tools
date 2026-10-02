@@ -414,7 +414,7 @@ async def test_readiness_updates_before_the_slowest_probe_finishes():
 
 async def test_unchanged_inventory_revision_skips_history_but_title_or_tip_drift_reconciles():
     existing = mapping("root-1", title="Old")
-    existing = replace(existing, last_source_revision="1:1")
+    existing = replace(existing, last_source_revision="projection-v2:1:1")
     mappings = FakeMappings([existing])
     sessions = [HermesSession("tip-root-1", "root-1", "Old", message_count=1, last_active=1)]
     sync, hermes, mirror, *_ = service(sessions=sessions, mappings=mappings)
@@ -426,6 +426,27 @@ async def test_unchanged_inventory_revision_skips_history_but_title_or_tip_drift
     await sync.full_scan()
     assert hermes.snapshot_requests == [("tip-root-2", "default")]
     assert mirror.calls[-1][0].title == "New"
+
+
+async def test_legacy_projection_revision_forces_existing_chat_reconciliation():
+    existing = replace(mapping("root-1"), last_source_revision="1:1")
+    mappings = FakeMappings([existing])
+    sessions = [
+        HermesSession(
+            "tip-root-1", "root-1", "Title root-1", message_count=1, last_active=1
+        )
+    ]
+    sync, hermes, mirror, *_ = service(sessions=sessions, mappings=mappings)
+
+    report = await sync.full_scan()
+
+    assert report.succeeded == 1
+    assert report.skipped == 0
+    assert hermes.snapshot_requests == [("tip-root-1", "default")]
+    assert len(mirror.calls) == 1
+    assert mappings.values[existing.lineage_key].last_source_revision == (
+        "projection-v2:1:1"
+    )
 
 
 async def test_terminal_desktop_event_and_session_info_tip_rotation_reconcile():

@@ -80,6 +80,49 @@ async def test_mapping_survives_reopen_and_rotates_tip(tmp_path):
     assert restored.stored_session_id == "tip-2"
 
 
+async def test_reset_openwebui_links_preserves_hermes_identity_and_event_position(
+    repositories,
+):
+    first = await repositories.mappings.upsert_session(
+        SessionIdentity("local", "default", "root-1", "tip-1", "First")
+    )
+    second = await repositories.mappings.upsert_session(
+        SessionIdentity("local", "default", "root-2", "tip-2", "Second")
+    )
+    await repositories.mappings.attach_chat(first.lineage_key, "chat-1")
+    await repositories.mappings.attach_chat(second.lineage_key, "chat-2")
+    await repositories.mappings.update_snapshot(
+        first.lineage_key,
+        last_hermes_message_id="message-1",
+        snapshot_hash="snapshot-1",
+    )
+    await repositories.mappings.update_source_revision(
+        first.lineage_key, "projection-v2:1:1"
+    )
+    async with repositories.database.write_transaction() as connection:
+        await connection.execute(
+            """
+            UPDATE session_mapping
+            SET last_event_seq = 42, last_event_epoch = 'epoch-1'
+            WHERE connection_id || ':' || profile || ':' || lineage_root_id = ?
+            """,
+            (first.lineage_key,),
+        )
+
+    reset_count = await repositories.mappings.reset_openwebui_links()
+
+    restored = await repositories.mappings.by_lineage_key(first.lineage_key)
+    assert reset_count == 2
+    assert restored is not None
+    assert restored.openwebui_chat_id is None
+    assert restored.last_hermes_message_id is None
+    assert restored.last_snapshot_hash is None
+    assert restored.last_source_revision is None
+    assert restored.last_event_seq == 42
+    assert restored.last_event_epoch == "epoch-1"
+    assert restored.stored_session_id == "tip-1"
+
+
 async def test_operation_key_is_idempotent_and_transition_is_monotonic(repositories):
     mapping = await repositories.mappings.upsert_session(
         SessionIdentity("local", "default", "root-1", "tip-1", "Chat")

@@ -122,6 +122,13 @@ workflow. Do not substitute Orca or another UI driver.
   transcript. The bridge never retries such a submit automatically. If Hermes
   history has no explicit bridge operation identity, resolve the turn manually
   before allowing more messages on that lineage.
+- Mirror-only history reset: make sure Hermes Desktop and its Read API on port
+  `8642` are running and `make status` reports connector readiness, then run
+  `make reset-history` and type `RESET`. This deletes only chats marked with
+  `variables.hermes_lineage_key` in the root `Hermes` folder, clears only their
+  OpenWebUI projection fields in the bridge database, and resynchronizes them.
+  It does not wipe the OpenWebUI volume, account, keys, settings, or unrelated
+  chats.
 
 Never paste `.env.local`, `/Users/frenzy/.hermes/.env`, or runner logs into an
 issue without redacting credentials.

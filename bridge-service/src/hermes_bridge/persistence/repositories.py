@@ -395,6 +395,35 @@ class MappingRepository:
         assert row is not None
         return _mapping(row)
 
+    async def reset_openwebui_links(self) -> int:
+        """Detach every mirror so the next scan recreates it from Hermes."""
+        now = _timestamp(utc_now())
+        async with self._database.write_transaction(immediate=True) as connection:
+            cursor = await connection.execute(
+                """
+                SELECT COUNT(*)
+                FROM session_mapping
+                WHERE openwebui_chat_id IS NOT NULL
+                   OR last_hermes_message_id IS NOT NULL
+                   OR last_snapshot_hash IS NOT NULL
+                   OR last_source_revision IS NOT NULL
+                """
+            )
+            row = await cursor.fetchone()
+            reset_count = int(row[0]) if row is not None else 0
+            await connection.execute(
+                """
+                UPDATE session_mapping
+                SET openwebui_chat_id = NULL,
+                    last_hermes_message_id = NULL,
+                    last_snapshot_hash = NULL,
+                    last_source_revision = NULL,
+                    updated_at = ?
+                """,
+                (now,),
+            )
+        return reset_count
+
     @staticmethod
     async def _fetch_mapping_by_lineage(
         connection: aiosqlite.Connection, lineage_key: str

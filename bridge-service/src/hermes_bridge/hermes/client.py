@@ -46,6 +46,10 @@ class HermesMessage:
     content: str
     created_at: int | float | str
     bridge_operation_id: str | None = None
+    reasoning: str | None = None
+    tool_calls: tuple[dict[str, Any], ...] = ()
+    tool_call_id: str | None = None
+    tool_name: str | None = None
 
 
 class HermesReadClient:
@@ -201,12 +205,31 @@ def _message_from_payload(payload: Mapping[str, Any]) -> HermesMessage | None:
     bridge_operation_id = payload.get("bridge_operation_id")
     if not isinstance(bridge_operation_id, str) or not bridge_operation_id:
         bridge_operation_id = None
+    reasoning = payload.get("reasoning", payload.get("reasoning_content"))
+    if not isinstance(reasoning, str) or not reasoning:
+        reasoning = None
+    raw_tool_calls = payload.get("tool_calls")
+    tool_calls = (
+        tuple(dict(call) for call in raw_tool_calls if isinstance(call, Mapping))
+        if isinstance(raw_tool_calls, list)
+        else ()
+    )
+    tool_call_id = payload.get("tool_call_id")
+    if not isinstance(tool_call_id, str) or not tool_call_id:
+        tool_call_id = None
+    tool_name = payload.get("tool_name")
+    if not isinstance(tool_name, str) or not tool_name:
+        tool_name = None
     return HermesMessage(
         id=message_id,
         role=role,
         content=content,
         created_at=created_at,
         bridge_operation_id=bridge_operation_id,
+        reasoning=reasoning,
+        tool_calls=tool_calls,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
     )
 
 

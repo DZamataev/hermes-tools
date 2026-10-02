@@ -1,4 +1,4 @@
-.PHONY: bootstrap local-env install-plugin test bridge-stack-test contract-test app start stop status openwebui-fetch
+.PHONY: bootstrap local-env install-plugin test bridge-stack-test contract-test app start stop status reset-history openwebui-fetch
 
 bootstrap:
 	git submodule update --init --recursive
@@ -16,6 +16,7 @@ test:
 	/bin/zsh tests/test_repository_layout.sh
 	/bin/zsh tests/test_plugin_install.sh
 	/bin/zsh runner/tests/test_stack.sh
+	/bin/zsh runner/tests/test_reset_openwebui_history.sh
 
 bridge-stack-test:
 	/bin/zsh tests/test_bridge_stack.sh
@@ -34,6 +35,9 @@ stop:
 
 status:
 	/bin/zsh runner/stack.sh status
+
+reset-history:
+	/bin/zsh runner/reset-openwebui-history.sh
 
 openwebui-fetch:
 	git -C open-webui fetch origin
