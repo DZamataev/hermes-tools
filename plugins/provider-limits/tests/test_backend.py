@@ -44,7 +44,7 @@ def fixture(name: str) -> dict:
 
 team = fixture("teamclaude-quota.json")
 codex = fixture("codexlb-v1-usage.json")
-one = fixture("codexlb-oneclick-v1-usage.json")
+one = fixture("codexlb-2-v1-usage.json")
 
 
 # --- quota normalisation ----------------------------------------------------

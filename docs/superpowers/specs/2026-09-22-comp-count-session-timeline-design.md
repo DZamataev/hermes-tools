@@ -24,7 +24,7 @@ Each segment renders as a Gantt-style row:
 
 ```
 03.09 16:35–17:47   █▂▂▂▁▃▃▃▄▃▂▁▂▃▂▃▃▂▂▃    1h12m
-                    ▲      ▲       ▲   gpt-5.6-sol · codex-lb-oneclick
+                    ▲      ▲       ▲   gpt-5.6-sol · codex-lb-2
                     96 prompts · 1131 tool calls · 🧳3
                     patch×369, terminal×288, read_file×219
 ```

@@ -214,7 +214,7 @@ _VENDORS = ("anthropic", "openai", "google", "openrouter", "deepseek", "zai", "n
 # Which vendor each gateway proxies. Unlike the gateway hosts (read from the
 # user's config.yaml) this is a property of the software, not of one install:
 # TeamClaude speaks the Anthropic API whoever runs it.
-_GATEWAY_VENDORS = {"teamclaude": "anthropic", "codex-lb": "openai", "codex-lb-oneclick": "openai"}
+_GATEWAY_VENDORS = {"teamclaude": "anthropic", "codex-lb": "openai"}
 
 
 def _url_key(url: str) -> str:

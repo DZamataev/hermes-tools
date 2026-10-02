@@ -102,7 +102,7 @@ const fixture = [
     { key: '7d', label: 'Week', window: '7d', remainingPct: 4 },
     { key: '5h:credits', label: '5 hours (credits)', window: '5h', remainingPct: 44 },
     { key: '5h:cost', label: '5 hours (cost_usd)', window: '5h', remainingPct: 91 }] },
-  { id: 'c', label: 'Codex LB OneClick', ok: false, buckets: [] }
+  { id: 'c', label: 'Codex LB 2', ok: false, buckets: [] }
 ]
 
 check('picks-5h-by-window', shortWindowBucket(fixture[0])?.value === 80)

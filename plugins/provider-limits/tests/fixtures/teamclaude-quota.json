@@ -1,7 +1,7 @@
 {
   "accounts": [
     {
-      "name": "account1@example.com (Looky)",
+      "name": "account1@example.com (Acme)",
       "type": "oauth",
       "disabled": false,
       "status": "active",

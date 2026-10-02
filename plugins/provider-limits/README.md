@@ -32,7 +32,7 @@
            Week       ▓▓▓░░░░░░░   32%
              resets in 2d · 23.09 15:30
            Week (Sonnet) ▓▓▓░░░░░   32%
-             │ account1@example.com (Looky)  5h 42% · week 4%
+             │ account1@example.com (Acme)   5h 42% · week 4%
              │ account2@example.com          5h 88% · week 43%
            Codex LB                            codex-lb
            5 hours    ▓▓▓▓▓▓▓▓▓▓   99%
@@ -41,7 +41,7 @@
            ─────────────────────────────────────────
            Status bar, left to right — each provider's
            5-HOUR window: TeamClaude 42%, Codex LB 99%,
-           Codex LB OneClick 100%. Weekly and other
+           Codex LB 2 100%. Weekly and other
            windows are not in those numbers — see the
            rows above.
 ```

@@ -257,7 +257,7 @@ check("unknown-session-is-empty-not-an-error", missing["segments"] == [])
 GATEWAYS = {
     "teamclaude": "https://teamclaude.larid.dedyn.io:3443",
     "codex-lb": "https://codexlb.larid.dedyn.io:2499/backend-api/codex",
-    "codex-lb-oneclick": "https://codex-lb.dev.looky.team/backend-api/codex",
+    "codex-lb-2": "https://codex-lb-2.example.com/backend-api/codex",
 }
 
 check("provider-from-base-url",
@@ -267,12 +267,12 @@ check("provider-from-base-url",
 # A trailing slash and a deeper path are the same gateway. The real store holds
 # both '/backend-api/codex' and '/backend-api/codex/' for one provider.
 check("provider-ignores-trailing-slash",
-      cc.provider_name("custom", "https://codex-lb.dev.looky.team/backend-api/codex/", GATEWAYS)
-      == "codex-lb-oneclick")
+      cc.provider_name("custom", "https://codex-lb-2.example.com/backend-api/codex/", GATEWAYS)
+      == "codex-lb-2")
 
 # Hermes writes the provider as 'custom:<name>' in some rows and bare in others.
 check("provider-strips-custom-prefix",
-      cc.provider_name("custom:codex-lb-oneclick", "", GATEWAYS) == "codex-lb-oneclick")
+      cc.provider_name("custom:codex-lb-2", "", GATEWAYS) == "codex-lb-2")
 
 # An already-specific name is kept as-is; nothing to improve.
 check("provider-keeps-specific-name",
@@ -297,6 +297,11 @@ check("vendor-codex-is-openai",
       cc.upstream_vendor("codex-lb", "https://codexlb.larid.dedyn.io:2499/backend-api/codex") == "openai")
 check("vendor-passes-through-known-vendor",
       cc.upstream_vendor("anthropic", "") == "anthropic")
+# A codex gateway under a name and host the table does not know (a second
+# instance, a renamed provider) is still priced as OpenAI: the model says so.
+check("vendor-unknown-gateway-falls-back-to-model",
+      cc.upstream_vendor("my-codex", "https://llm.example.net/backend-api/codex", "gpt-5.6-sol") == "openai",
+      cc.upstream_vendor("my-codex", "https://llm.example.net/backend-api/codex", "gpt-5.6-sol"))
 
 # --- cost -------------------------------------------------------------------
 
@@ -399,7 +404,7 @@ check("usage-counts-auxiliary-tasks", len(aux["models"]) == 1 and aux["models"][
 
 # Grouping happens on the RESOLVED provider, not the raw row. The real store
 # writes one gateway under several spellings — 'custom' with a URL, and
-# 'custom:codex-lb-oneclick' with none — and grouping before resolution split
+# 'custom:codex-lb-2' with none — and grouping before resolution split
 # one model into two identical-looking rows in the panel.
 def same_gateway_spelled_twice(conn, sid):
     fx.route(conn, sid, "claude-opus-5", "custom", T0, T0 + 60, calls=4,
