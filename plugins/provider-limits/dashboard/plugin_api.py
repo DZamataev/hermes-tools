@@ -1,9 +1,10 @@
 """Provider limits — backend routes, mounted at /api/plugins/provider-limits/.
 
 Reads the quota/usage APIs of the *custom* providers declared in ``config.yaml``
-and normalises them into one shape the desktop status bar can render.
+(plus the built-in OpenCode Go provider) and normalises them into one shape the
+desktop status bar can render.
 
-Two adapters, selected from the provider's own config (no separate plugin
+Three adapters, selected from the provider's own config (no separate plugin
 config to drift out of sync):
 
 * ``anthropic_oauth_proxy`` capability  → TeamClaude ``GET /teamclaude/quota``
@@ -11,6 +12,12 @@ config to drift out of sync):
 * ``transport: codex_responses``        → codex-lb ``GET /v1/usage``
   (``Authorization: Bearer``). Aggregate 5h / 7d credit windows; the key's own
   ``limits`` are preferred over ``upstream_limits`` when they differ.
+* OpenCode Go                           → ``GET https://opencode.ai/zen/go/v1/usage``
+  (``Authorization: Bearer``). Rolling 5h / weekly / monthly windows. It is a
+  Hermes BUILT-IN provider, so it usually has no ``providers:`` entry: it is
+  picked up from ``OPENCODE_GO_API_KEY`` being set (base URL from
+  ``OPENCODE_GO_BASE_URL``, as Hermes itself does), or from a custom provider
+  whose ``base_url`` points at ``opencode.ai/zen/go``.
 
 The API key is read from the provider's own ``key_env`` and is sent ONLY to that
 provider's upstream (``x-api-key`` / ``Authorization``). It is never copied into
@@ -85,12 +92,28 @@ def _providers_config() -> Dict[str, Dict[str, Any]]:
 
 
 def _api_key(entry: Dict[str, Any]) -> str:
-    from hermes_cli.config import get_env_value_prefer_dotenv
-
     key_env = entry.get("key_env")
     if not isinstance(key_env, str) or not key_env:
         return ""
-    return get_env_value_prefer_dotenv(key_env) or ""
+    return _env(key_env)
+
+
+def _env(name: str) -> str:
+    from hermes_cli.config import get_env_value_prefer_dotenv
+
+    return get_env_value_prefer_dotenv(name) or ""
+
+
+# Hermes' own defaults for the built-in provider (hermes_cli/auth.py registers
+# "opencode-go" with this base URL, this key variable and this override).
+OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_KEY_ENV = "OPENCODE_GO_API_KEY"
+OPENCODE_GO_BASE_URL_ENV = "OPENCODE_GO_BASE_URL"
+
+
+def _is_opencode_go_url(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.netloc.endswith("opencode.ai") and parts.path.rstrip("/").startswith("/zen/go")
 
 
 def _origin(url: str) -> str:
@@ -108,10 +131,16 @@ def _adapter_for(entry: Dict[str, Any]) -> Optional[str]:
         return "teamclaude"
     if entry.get("transport") == "codex_responses":
         return "codex-lb"
+    if _is_opencode_go_url(str(entry.get("base_url") or entry.get("api") or "")):
+        return "opencode-go"
     return None
 
 
 def _base_url_for(kind: str, entry: Dict[str, Any]) -> str:
+    if kind == "opencode-go":
+        # The usage route hangs off the API path (/zen/go/v1/usage), not the
+        # service root, so the configured URL is kept whole.
+        return str(entry.get("base_url") or entry.get("api") or "").rstrip("/")
     raw = entry.get("api") if kind == "teamclaude" else entry.get("base_url")
     raw = raw or entry.get("base_url") or entry.get("api") or ""
     return _origin(str(raw))
@@ -136,6 +165,22 @@ def discover_targets() -> List[Dict[str, Any]]:
             "base_url": base_url,
             "key": _api_key(entry),
         })
+
+    # OpenCode Go is a built-in provider: no `providers:` entry, just a key in
+    # ~/.hermes/.env. Shown only when that key is set — without it the user is
+    # not subscribed, and a permanent "no API key" row would be noise. Skipped
+    # when a custom entry already points at the same service.
+    if not any(t["kind"] == "opencode-go" for t in targets):
+        key = _env(OPENCODE_GO_KEY_ENV)
+        if key:
+            base_url = (_env(OPENCODE_GO_BASE_URL_ENV) or OPENCODE_GO_DEFAULT_BASE_URL).rstrip("/")
+            targets.append({
+                "id": "opencode-go",
+                "label": "OpenCode Go",
+                "kind": "opencode-go",
+                "base_url": base_url,
+                "key": key,
+            })
     return targets
 
 
@@ -349,6 +394,60 @@ def _codex_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     return {"buckets": buckets, "accounts": [], "poolWindows": pool_windows}
 
 
+_OPENCODE_GO_WINDOWS = (
+    # payload key, label, WINDOW CLASS (what the UI selects on)
+    ("rolling", "5 hours", "5h"),
+    ("weekly", "Week", "7d"),
+    ("monthly", "Month", "monthly"),
+)
+
+
+def _opencode_go_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """OpenCode Go /zen/go/v1/usage → three dollar-denominated windows.
+
+    ``percent`` is the share USED, not left. Confirmed in OpenCode's own source
+    (packages/console/core/src/subscription.ts::analyzeRollingUsage):
+    ``usagePercent = floor(min(100, usage / limitInMicroCents * 100))``, and
+    ``routes/zen/go/v1/usage.ts::formatUsage`` passes it through as ``percent``.
+    So remaining = 100 - percent. Because the producer FLOORS the used share,
+    the remainder can overstate by under one point — never understate.
+
+    ``status`` is ``"ok"`` or ``"rate-limited"`` (the producer also forces
+    percent to 100 then). It is matched against the known-good value: any other
+    word is shown as exhausted rather than trusted, so a new throttling state
+    cannot slip through as a healthy number.
+
+    The dollar ceilings ($ per window) are not in the payload and differ
+    between the Go and Go Plus plans, so no absolute figure is invented here.
+    """
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    buckets = []
+    for key, label, window in _OPENCODE_GO_WINDOWS:
+        row = usage.get(key)
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "")
+        try:
+            used = float(row.get("percent"))
+        except (TypeError, ValueError):
+            used = None
+        if status and status != "ok":
+            remaining: Optional[float] = 0.0
+        elif used is None:
+            remaining = None
+        else:
+            remaining = max(0.0, min(100.0, 100.0 - used))
+        bucket = _bucket(key, label, remaining, _epoch_ms(row.get("resetsAt")),
+                         f"{status or 'status unknown'} · {used:g}% used" if used is not None else status)
+        if bucket:
+            bucket["window"] = window
+            bucket["status"] = status
+            buckets.append(bucket)
+    return {"buckets": buckets, "accounts": [], "poolWindows": []}
+
+
 # --- upstream service status ------------------------------------------------
 
 # Statuspage's own vocabulary, mapped onto the three states the UI can draw.
@@ -460,6 +559,10 @@ async def _fetch_target(client: httpx.AsyncClient, target: Dict[str, Any]) -> Di
         url = f"{target['base_url']}/teamclaude/quota"
         headers = {"x-api-key": target["key"]}
         parse = _teamclaude_payload
+    elif target["kind"] == "opencode-go":
+        url = f"{target['base_url']}/usage"
+        headers = {"Authorization": f"Bearer {target['key']}"}
+        parse = _opencode_go_payload
     else:
         url = f"{target['base_url']}/v1/usage"
         headers = {"Authorization": f"Bearer {target['key']}"}
@@ -470,7 +573,11 @@ async def _fetch_target(client: httpx.AsyncClient, target: Dict[str, Any]) -> Di
         response.raise_for_status()
         data = response.json()
     except httpx.HTTPStatusError as exc:
-        return {**base, "ok": False, "error": f"HTTP {exc.response.status_code}", "buckets": [], "accounts": [], "poolWindows": []}
+        code = exc.response.status_code
+        # OpenCode answers 403 (EntitlementError) for a valid key without a Go
+        # plan — a different fix from a rejected key, so say which.
+        hint = " (no OpenCode Go subscription)" if target["kind"] == "opencode-go" and code == 403 else ""
+        return {**base, "ok": False, "error": f"HTTP {code}{hint}", "buckets": [], "accounts": [], "poolWindows": []}
     except Exception as exc:  # network, TLS, JSON — all "upstream did not answer"
         return {**base, "ok": False, "error": type(exc).__name__, "buckets": [], "accounts": [], "poolWindows": []}
 

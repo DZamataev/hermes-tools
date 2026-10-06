@@ -114,6 +114,13 @@
 |---|---|---|
 | `capabilities.anthropic_oauth_proxy: true` | TeamClaude | `GET {api}/teamclaude/quota`, заголовок `x-api-key` |
 | `transport: codex_responses` | codex-lb | `GET {origin}/v1/usage`, заголовок `Authorization: Bearer` |
+| задан `OPENCODE_GO_API_KEY` в `.env` (или `base_url` кастомного провайдера на `opencode.ai/zen/go`) | OpenCode Go | `GET {base_url}/usage` (по умолчанию `https://opencode.ai/zen/go/v1/usage`), заголовок `Authorization: Bearer` |
+
+OpenCode Go — **встроенный** провайдер Hermes, записи в `providers:` у него нет. Поэтому он
+появляется последним в чипе, если в `.env` есть `OPENCODE_GO_API_KEY`; без ключа строки нет
+совсем (нет подписки — нечего показывать). `OPENCODE_GO_BASE_URL` учитывается так же, как
+в самом Hermes. Если кастомный провайдер уже смотрит на `opencode.ai/zen/go`, второй строки
+не будет.
 
 Ключ берётся из `key_env` через `get_env_value_prefer_dotenv` — то есть из `~/.hermes/.env`.
 Он уходит **только на сам апстрим** (в заголовке `x-api-key` / `Authorization`), в браузерную
@@ -137,6 +144,14 @@
   словами этот API называет *окна* (`preferEarlierResetWindow: primary|secondary`). Поэтому
   они идут отдельной строкой `pool availability`, а не подписываются «аккаунт» рядом с
   настоящими аккаунтами TeamClaude.
+- **OpenCode Go: `percent` — это РАСХОД**, остаток = `100 − percent`. Проверено по исходнику
+  OpenCode (`packages/console/core/src/subscription.ts`: `usagePercent = floor(usage / limit
+  * 100)`; `routes/zen/go/v1/usage.ts` отдаёт его как `percent`). Окна: `rolling` → 5h,
+  `weekly` → 7d, `monthly` → месяц. Расход округляется вниз, так что остаток может быть
+  завышен меньше чем на пункт, но не занижен. `status` сверяется с известно-хорошим `ok`:
+  `rate-limited` и любое незнакомое слово рисуются как 0 %. Долларовых потолков в ответе нет
+  (у Go и Go Plus они разные), поэтому абсолютных сумм плагин не показывает. `HTTP 403` у
+  этого эндпоинта — ключ верный, но подписки Go нет; так и подписано.
 
 ## Время
 
@@ -191,7 +206,7 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 ./tests/run.sh --e2e    # плюс живой роут и настоящие апстримы
 ```
 
-Два офлайн-набора (53 проверки) и один сквозной:
+Два офлайн-набора (77 проверок) и один сквозной:
 
 - **`test_backend.py`** — фикстуры внутрь, нормализованные строки наружу. Фикстуры в
   `tests/fixtures/` — это реальные ответы с заменёнными почтами и **нетронутыми
@@ -218,4 +233,4 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 | в чип возвращаются имена | `chip-renders-numbers-only — "⛽ TeamClaude 80% \| …"` |
 
 Проверять стенд мутацией стоит и дальше: набор, который не умеет краснеть, —
-это 53 строчки самоуспокоения.
+это 77 строчек самоуспокоения.

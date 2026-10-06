@@ -501,7 +501,7 @@ export {
 export default {
   id: ID,
   name: 'Provider limits',
-  description: 'Remaining quota for custom providers (TeamClaude, Codex LB) in the status bar.',
+  description: 'Remaining quota for custom providers (TeamClaude, Codex LB, OpenCode Go) in the status bar.',
   register(ctx) {
     rest = path => ctx.rest(path)
 
