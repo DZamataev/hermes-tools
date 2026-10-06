@@ -69,7 +69,7 @@ globalThis.document = {
 const plugin = (await import('./plugin.js')).default
 const {
   ChipExplainer, chipEntries, clock24, downServices, list, pct,
-  relativeReset, resetAt24, ServiceRow, ServicesBanner, shortWindowBucket, tone
+  relativeReset, resetAt24, ServiceRow, ServicesBanner, chipBucket, tone
 } = await import('./plugin.js')
 
 const registered = []
@@ -105,13 +105,30 @@ const fixture = [
   { id: 'c', label: 'Codex LB 2', ok: false, buckets: [] }
 ]
 
-check('picks-5h-by-window', shortWindowBucket(fixture[0])?.value === 80)
-check('picks-tightest-of-several-5h', shortWindowBucket(fixture[1])?.value === 44)
-check('no-5h-row-is-null', shortWindowBucket(fixture[2]) === null && shortWindowBucket({}) === null)
+check('picks-5h-by-window', chipBucket(fixture[0])?.value === 80 && chipBucket(fixture[0])?.mark === '')
+check('picks-tightest-of-several-5h', chipBucket(fixture[1])?.value === 44)
+check('no-row-is-null', chipBucket(fixture[2]) === null && chipBucket({}) === null)
 // Selection must key on `window`, never on label text: labels are prose and
 // gain "(cost_usd)" suffixes, so text matching would silently rot.
 check('ignores-label-text',
-  shortWindowBucket({ buckets: [{ label: '5 hours', window: '7d', remainingPct: 3 }] }) === null)
+  chipBucket({ buckets: [{ label: '5 hours', window: '7d', remainingPct: 3 }] })?.mark === 'w')
+
+// A node whose accounts carry only a weekly quota (live codex-lb-oneclick:
+// weekly cost_usd 95.7% beside 7d credits 56%) shows the TIGHTEST weekly row,
+// marked "w", instead of a dash.
+const weeklyOnly = { id: 'w', label: 'Codex LB OneClick', ok: true, buckets: [
+  { key: '7d:cost_usd', label: 'Week (cost_usd)', window: '7d', remainingPct: 95.7 },
+  { key: '7d:credits', label: 'Week (credits)', window: '7d', remainingPct: 56 }] }
+check('fallback-tightest-of-shortest', chipBucket(weeklyOnly)?.value === 56 && chipBucket(weeklyOnly)?.mark === 'w',
+  JSON.stringify(chipBucket(weeklyOnly)))
+// 5h always wins when present, however low a longer window is.
+check('5h-outranks-longer-windows', chipBucket({ buckets: [
+  { window: '7d', remainingPct: 2 }, { window: '5h', remainingPct: 90 }] })?.value === 90)
+// The SHORTEST available window wins, not the tightest across windows.
+check('shortest-window-first', chipBucket({ buckets: [
+  { window: 'monthly', remainingPct: 1 }, { window: 'daily', remainingPct: 70 }] })?.mark === 'd')
+// A window of unknown span cannot be labelled, so it is never shown.
+check('unknown-window-not-shown', chipBucket({ buckets: [{ window: 'fortnight', remainingPct: 10 }] }) === null)
 
 // --- chip entries ---------------------------------------------------------
 
@@ -155,6 +172,14 @@ check('chip-renders-numbers-only', !/[A-Za-z]{3,}/.test(chipText), JSON.stringif
 check('chip-uses-pipe-separator', chipText.includes('|'), JSON.stringify(chipText))
 check('chip-one-figure-per-provider',
   (chipText.match(/\d+%|—/g) ?? []).length === fixture.length, JSON.stringify(chipText))
+
+// A weekly-only provider renders its figure with the window letter, so it is
+// never mistaken for a 5h number beside it.
+globalThis.__probeQuery = { data: { providers: [fixture[0], weeklyOnly], services: [] }, error: null, isFetching: false }
+const markedRoot = registered[0].render()
+const markedText = collectText(markedRoot.t(markedRoot.p ?? {}).p.children[0])
+check('chip-marks-fallback-window', /80%\s*\|\s*56%w/.test(markedText) && !/[A-Za-z]{2,}/.test(markedText),
+  JSON.stringify(markedText))
 globalThis.__probeQuery = undefined
 
 // --- the explainer --------------------------------------------------------
@@ -175,9 +200,15 @@ check('explainer-names-each-5h',
   realText.includes('Codex LB 98%') && realText.includes('TeamClaude 79%') && !realText.includes('4%'),
   realText)
 // The chip covers one window; a nearly-empty weekly limit must not hide.
-check('explainer-warns-other-windows', realText.includes('Weekly and other windows are not'))
+check('explainer-warns-other-windows', realText.includes('Other windows are not'))
 check('explainer-marks-missing',
-  explain([real[0], { id: 'x', label: 'Broken', ok: false, buckets: [] }]).includes('no 5-hour limit'))
+  explain([real[0], { id: 'x', label: 'Broken', ok: false, buckets: [] }]).includes('“—” means'))
+// The letter is explained where the legend maps numbers to providers.
+const fallbackText = explain([real[0], weeklyOnly])
+check('explainer-explains-letter',
+  fallbackText.includes('Codex LB OneClick 56%w (week)') && fallbackText.includes('w = week')
+  && fallbackText.includes('no 5-hour limit'), fallbackText)
+check('explainer-no-letter-note-without-fallback', !realText.includes('A letter after'), realText)
 check('explainer-reports-outage',
   explain(real, [{ id: 'o', label: 'OpenAI', ok: false }]).includes('incident'))
 check('explainer-empty-claims-nothing', explain([]).includes('no provider is configured'))

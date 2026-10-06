@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -156,7 +157,10 @@ else:
     figures = [part for part in chip.split("|")]
     check("chip-one-figure-per-provider", len(figures) == len(providers),
           f"{len(figures)} figures for {len(providers)} providers")
-    check("chip-has-no-names", not any(c.isalpha() and c.isascii() for c in chip), chip)
+    # Bare figures only. A single window letter after a number ("56%w") is
+    # allowed — it marks a provider shown at a non-5h window — but no word.
+    check("chip-has-no-names",
+          re.fullmatch(r"[^A-Za-z]*(?:\d+%[hdwm]?[^A-Za-z]*)*", chip) is not None, chip)
     # Every provider must be traceable from the panel's legend.
     check("panel-names-every-provider",
           all(p["label"] in panel for p in providers),

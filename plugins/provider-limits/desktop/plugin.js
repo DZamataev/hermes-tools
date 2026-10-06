@@ -297,16 +297,24 @@ function ChipExplainer({ providers, services }) {
   const lines = [entries.length === 0
     ? 'The status bar shows ⛽ — no provider is configured.'
     : `Status bar, left to right — each provider's 5-HOUR window: `
-      + `${entries.map(e => `${e.label} ${e.value === null ? '—' : `${e.value}%`}`).join(', ')}.`]
+      + `${entries.map(e => `${e.label} ${e.value === null ? '—' : `${e.value}%${e.mark}`}${e.mark ? ` (${e.windowName})` : ''}`).join(', ')}.`]
+
+  const fallbacks = entries.filter(e => e.mark)
+  if (fallbacks.length > 0) {
+    // A lettered figure is a DIFFERENT window from its neighbours; say which,
+    // or "56%w" next to "95%" reads as two comparable 5h numbers.
+    lines.push(`A letter after a number marks a provider with no 5-hour limit, shown at its shortest window instead `
+      + `(${[...new Set(fallbacks.map(e => `${e.mark} = ${e.windowName}`))].join(', ')}).`)
+  }
 
   if (entries.some(e => e.value !== null)) {
     // The chip deliberately shows one window only, so say what it does NOT
     // cover — a weekly limit can be nearly gone while every 5h figure is high.
-    lines.push('Weekly and other windows are not in those numbers — see the rows above.')
+    lines.push('Other windows are not in those numbers — see the rows above.')
   }
 
   if (entries.some(e => e.value === null)) {
-    lines.push('“—” means that provider reported no 5-hour limit.')
+    lines.push('“—” means that provider reported no limit the status bar can show.')
   }
 
   if (down.length > 0) {
@@ -388,53 +396,73 @@ function downServices(services) {
   return list(services).filter(service => service.ok === false)
 }
 
-/** The 5h row for one provider, or null when it has none.
+// Windows from shortest to longest, with the letter the chip appends when it
+// has to fall back to one. 5h carries no letter: it is the chip's own window.
+const CHIP_WINDOWS = [
+  { window: '5h', mark: '', name: '5 hours' },
+  { window: '1h', mark: 'h', name: 'hour' },
+  { window: 'daily', mark: 'd', name: 'day' },
+  { window: '7d', mark: 'w', name: 'week' },
+  { window: 'monthly', mark: 'm', name: 'month' }
+]
+
+/** What the chip shows for one provider: its 5h row when it has one, else the
+ *  tightest row of its SHORTEST reported window, marked with that window's
+ *  letter. A node whose accounts only carry a weekly quota then shows that
+ *  quota rather than a dash.
+ *
+ *  Within the chosen window the tightest row wins (codex-lb reports a weekly
+ *  cost_usd cap beside a 7d credits pool): that is the one that stops requests.
+ *  Windows this list does not know are never used — a figure of unknown span
+ *  cannot be labelled honestly.
  *
  *  Selection is on the backend's `window` field, NEVER on the display label:
- *  labels are prose ("5 hours", and "(cost_usd)" suffixes get appended when two
- *  resources share a window), so matching text would silently stop working the
- *  first time a label is reworded.
- *
- *  A provider can legitimately have several 5h rows — codex-lb reports separate
- *  credit and cost_usd ceilings — so the tightest one wins, same rule as the
- *  popover's own collapsing. */
-function shortWindowBucket(provider) {
-  let best = null
-  for (const bucket of list(provider.buckets)) {
-    if (bucket.window !== '5h') {
-      continue
+ *  labels are prose ("5 hours", plus "(cost_usd)" suffixes when two resources
+ *  share a window), so matching text would silently stop working the first
+ *  time a label is reworded. */
+function chipBucket(provider) {
+  for (const { window, mark, name } of CHIP_WINDOWS) {
+    let best = null
+    for (const bucket of list(provider.buckets)) {
+      if (bucket.window !== window) {
+        continue
+      }
+      const value = pct(bucket.remainingPct)
+      if (value !== null && (best === null || value < best.value)) {
+        best = { bucket, value, mark, windowName: name }
+      }
     }
-
-    const value = pct(bucket.remainingPct)
-    if (value !== null && (best === null || value < best.value)) {
-      best = { bucket, value }
+    if (best !== null) {
+      return best
     }
   }
-  return best
+  return null
 }
 
 /** One entry per configured provider, in config order, carrying whatever the
- *  status bar can say about it. Providers are kept even when they have no 5h
+ *  status bar can say about it. Providers are kept even when they have no
  *  figure: a missing column would silently shrink the chip and read as "that
  *  provider is gone". */
 function chipEntries(providers, services) {
   const down = downServices(services).length > 0
   return list(providers).map(provider => {
-    const best = shortWindowBucket(provider)
+    const best = chipBucket(provider)
     const value = best === null ? null : Math.round(best.value)
     const label = String(provider.label ?? provider.id ?? 'provider')
     return {
       id: provider.id,
       label,
       value,
+      mark: best?.mark ?? '',
+      windowName: best?.windowName ?? '',
       // An upstream outage outranks a healthy percentage: quota is irrelevant
       // while the service is down.
       tone: down ? 'down' : provider.ok === false || value === null ? 'unknown' : tone(value),
       title: provider.ok === false
         ? `${label}: ${provider.error ?? 'did not answer'}`
         : value === null
-          ? `${label}: no 5h limit reported`
-          : `${label} · ${best.bucket.label}: ${value}% left`
+          ? `${label}: no limit reported`
+          : `${label} · ${best.bucket.label}: ${value}% left${best.mark ? ' (no 5-hour limit)' : ''}`
     }
   })
 }
@@ -461,7 +489,7 @@ function Chip() {
         jsx('span', {
           className: 'pl-chip-item',
           'data-tone': entry.tone,
-          children: entry.value === null ? '—' : `${entry.value}%`
+          children: entry.value === null ? '—' : `${entry.value}%${entry.mark}`
         }, entry.id ?? index)
       ].filter(Boolean))
 
@@ -493,9 +521,9 @@ function Chip() {
 
 // Exported for tests; the app only consumes the default export.
 export {
-  ChipExplainer, chipEntries, clock24, downServices, list, pct,
+  ChipExplainer, chipBucket, chipEntries, clock24, downServices, list, pct,
   relativeReset, resetAt24, ServiceRow, ServicesBanner,
-  shortWindowBucket, tone
+  tone
 }
 
 export default {
