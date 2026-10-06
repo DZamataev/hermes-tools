@@ -35,6 +35,9 @@ codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
+**Archived branch:** `archive/hermes-openwebui-bridge` is a failed attempt at an
+OpenWebUI bridge, kept for history only. Never merge it.
+
 ## Bootstrap and test
 
 ```bash
