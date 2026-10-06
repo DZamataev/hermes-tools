@@ -24,6 +24,7 @@ const suites = [
   { name: 'kanban', cmd: ['bash', 'kanban/tests/run.sh'] },
   { name: 'clean-worktrees', cmd: ['bash', 'skills/dz-clean-worktrees/tests/run.sh'] },
   { name: 'wrapup', cmd: ['bash', 'skills/dz-wrapup/tests/run.sh'] },
+  { name: 'agent-memory', cmd: ['bash', 'skills/dz-agent-memory/tests/run.sh'] },
   { name: 'launchd', cmd: ['zsh', 'runner/tests/test_launchd.sh'] },
   { name: 'webui app', cmd: ['zsh', 'runner/tests/test_webui_app.sh'] },
   // Builds and codesigns "Hermes WebUI.app" in the repository root — the one

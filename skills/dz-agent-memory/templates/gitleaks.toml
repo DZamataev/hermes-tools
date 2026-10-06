@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "documented placeholders in skill examples"
+regexTarget = "secret"
+regexes = ['''^definitely-not-a-real-token$''']

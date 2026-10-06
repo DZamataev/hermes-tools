@@ -27,7 +27,9 @@ codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
 - `skills/` — standalone skills: `dz-clean-worktrees` (find worktrees whose
   work is merged, list them with what/when/merged/pushed/size, remove the
   picked ones) and `dz-wrapup` (end-of-session close-out: state, summary,
-  process improvements, then the session's worktree). Install by copy:
+  process improvements, then the session's worktree; `close` lands by the
+  project's runbook and detaches the session) and `dz-agent-memory` (git mirror
+  of agent memory and skills: setup, status, review). Install by copy:
   `bash skills/install.sh`.
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
