@@ -139,9 +139,12 @@ check('failed-provider-has-no-number', entries[2].value === null && entries[2].t
 check('skips-nonnumeric', chipEntries(
   [{ id: 'a', label: 'A', ok: true, buckets: [
     { window: '5h', remainingPct: NaN }, { window: '5h', remainingPct: null }] }], [])[0].value === null)
-// An upstream incident outranks a healthy percentage.
-check('outage-overrides-tone',
-  chipEntries(fixture, [{ id: 'o', label: 'OpenAI', ok: false }]).every(e => e.tone === 'down'))
+// An upstream incident does NOT recolour the figures: each keeps its quota
+// tone, and the outage is shown once by the ⚠ next to ⛽.
+check('outage-keeps-quota-tone',
+  JSON.stringify(chipEntries(fixture, [{ id: 'o', label: 'OpenAI', ok: false }]).map(e => e.tone))
+  === JSON.stringify(chipEntries(fixture, []).map(e => e.tone)),
+  JSON.stringify(chipEntries(fixture, [{ id: 'o', label: 'OpenAI', ok: false }]).map(e => e.tone)))
 
 // --- the rendered chip ----------------------------------------------------
 
@@ -180,6 +183,15 @@ const markedRoot = registered[0].render()
 const markedText = collectText(markedRoot.t(markedRoot.p ?? {}).p.children[0])
 check('chip-marks-fallback-window', /80%\s*\|\s*56%w/.test(markedText) && !/[A-Za-z]{2,}/.test(markedText),
   JSON.stringify(markedText))
+// During an outage ⛽ stays and ⚠ is added right after it.
+globalThis.__probeQuery = { data: { providers: fixture, services: [{ id: 'o', label: 'OpenAI', ok: false }] },
+                            error: null, isFetching: false }
+const downRoot = registered[0].render()
+const downText = collectText(downRoot.t(downRoot.p ?? {}).p.children[0])
+check('outage-adds-warning-after-fuel', downText.startsWith('⛽ ⚠ '), JSON.stringify(downText))
+check('no-warning-when-healthy', chipText.startsWith('⛽ ') && !chipText.includes('⚠'), JSON.stringify(chipText))
+const downCss = (await import('node:fs')).readFileSync(new URL('./plugin.js', import.meta.url), 'utf8')
+check('no-outage-recolour-rule', !downCss.includes('data-tone=down'))
 globalThis.__probeQuery = undefined
 
 // --- the explainer --------------------------------------------------------

@@ -36,8 +36,8 @@ const CSS = `
 .pl-chip-item{display:inline-flex;align-items:baseline;min-width:0}
 .pl-chip-item[data-tone=warn]{color:var(--ui-accent)}
 .pl-chip-item[data-tone=low]{color:var(--dt-destructive,var(--ui-accent))}
-.pl-chip-item[data-tone=down]{color:var(--dt-destructive,var(--ui-accent))}
 .pl-chip-sep{color:var(--ui-stroke-secondary)}
+.pl-chip-alert{color:var(--ui-accent)}
 .pl-popover{width:328px;max-width:calc(100vw - 24px)}
 .pl-panel{display:flex;flex-direction:column;gap:10px;max-height:min(60dvh,420px);overflow-y:auto;overscroll-behavior:contain}
 .pl-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
@@ -444,7 +444,6 @@ function chipBucket(provider) {
  *  figure: a missing column would silently shrink the chip and read as "that
  *  provider is gone". */
 function chipEntries(providers, services) {
-  const down = downServices(services).length > 0
   return list(providers).map(provider => {
     const best = chipBucket(provider)
     const value = best === null ? null : Math.round(best.value)
@@ -455,9 +454,10 @@ function chipEntries(providers, services) {
       value,
       mark: best?.mark ?? '',
       windowName: best?.windowName ?? '',
-      // An upstream outage outranks a healthy percentage: quota is irrelevant
-      // while the service is down.
-      tone: down ? 'down' : provider.ok === false || value === null ? 'unknown' : tone(value),
+      // Tone is the quota's own. An upstream outage is signalled once, by the
+      // ⚠ after ⛽ — recolouring every figure red was too loud for a status bar
+      // and hid which provider was actually low.
+      tone: provider.ok === false || value === null ? 'unknown' : tone(value),
       title: provider.ok === false
         ? `${label}: ${provider.error ?? 'did not answer'}`
         : value === null
@@ -504,7 +504,10 @@ function Chip() {
           title,
           children: jsxs('span', {
             className: 'pl-chip',
-            children: [down.length ? '⚠' : '⛽', ...children]
+            // The outage marker is ADDED after ⛽, never swapped in for it: the
+            // chip stays recognisable, and the figures keep their own tones.
+            children: ['⛽', down.length > 0 && jsx('span', { className: 'pl-chip-alert', children: '⚠' }), ...children]
+              .filter(Boolean)
           })
         })
       }),
