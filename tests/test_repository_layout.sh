@@ -41,7 +41,7 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
 for script in kanban-init.sh kanban-profiles.sh kanban-card.sh kanban-chain.py kanban-sync.py; do
   [[ -x "$ROOT/kanban/scripts/$script" ]] || fail "kanban/scripts/$script is missing or not executable"
 done
-for skill in dz-clean-worktrees dz-wrapup dz-agent-memory; do
+for skill in dz-clean-worktrees dz-wrapup dz-agent-memory dz-kanban; do
   [[ -f "$ROOT/skills/$skill/SKILL.md" ]] || fail "skills/$skill/SKILL.md is missing"
 done
 [[ -x "$ROOT/skills/install.sh" ]] || fail "skills/install.sh is missing or not executable"

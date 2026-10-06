@@ -97,7 +97,7 @@ def lineage(session_id):
         conn.close()
 
 
-def survey(session_id):
+def survey(session_id, board=None):
     ids = lineage(session_id)
     idset = {s["id"] for s in ids}
     subs, open_cards, errors = [], [], []
@@ -105,6 +105,8 @@ def survey(session_id):
         boards = [b["slug"] for b in hermes_json("kanban", "boards", "list") if not b.get("archived")]
     except (RuntimeError, ValueError) as e:
         boards, errors = [], ["kanban boards: %s" % e]
+    if board:
+        boards = [b for b in boards if b == board]
     for b in boards:
         try:
             mine = [s for s in hermes_json("kanban", "--board", b, "notify-list")
@@ -154,7 +156,7 @@ def apply(rep, keep_pin, keep_subs):
     return done
 
 
-def print_report(rep, done=None):
+def print_report(rep, done=None, keep_pin=False):
     ids = rep["lineage"]
     print("session %s — lineage: %s" % (rep["session"], ", ".join(
         s["id"] + (" (pinned)" if s["pinned"] else "") for s in ids)))
@@ -175,7 +177,8 @@ def print_report(rep, done=None):
         print("! " + e)
     if done is None:
         pins = [s["id"] for s in ids if s["pinned"]]
-        print("pin: %s" % ("would unpin " + ", ".join(pins) if pins else "not pinned"))
+        if not keep_pin:
+            print("pin: %s" % ("would unpin " + ", ".join(pins) if pins else "not pinned"))
         print("dry run; re-run with --yes")
         return
     print("unsubscribed %d; unpinned %s" % (done["unsubscribed"], ", ".join(done["unpinned"]) or "nothing"))
@@ -189,17 +192,18 @@ def main(argv=None):
     ap.add_argument("--yes", action="store_true")
     ap.add_argument("--keep-pin", action="store_true")
     ap.add_argument("--keep-subs", action="store_true")
+    ap.add_argument("--board", help="only this board's subscriptions")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if not a.session:
         ap.error("no --session and no HERMES_SESSION_ID in the environment")
-    rep = survey(a.session)
+    rep = survey(a.session, a.board)
     done = apply(rep, a.keep_pin, a.keep_subs) if a.yes else None
     if a.json:
         json.dump(dict(rep, applied=done), sys.stdout, indent=1, ensure_ascii=False)
         print()
     else:
-        print_report(rep, done)
+        print_report(rep, done, a.keep_pin)
     return 1 if (done and done["failed"]) or rep["errors"] else 0
 
 

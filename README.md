@@ -29,14 +29,16 @@ codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
   picked ones) and `dz-wrapup` (end-of-session close-out: state, summary,
   process improvements, then the session's worktree; `close` lands by the
   project's runbook and detaches the session) and `dz-agent-memory` (git mirror
-  of agent memory and skills: setup, status, review). Install by copy:
+  of agent memory and skills: setup, status, review) and `dz-kanban` (entry
+  point to the Kanban method: setup/update, subscribe/unsubscribe a session,
+  board status, orchestrator review). Install by copy:
   `bash skills/install.sh`.
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
 
-**Archived branch:** `archive/hermes-openwebui-bridge` is a failed attempt at an
-OpenWebUI bridge, kept for history only. Never merge it.
+**Archived branches:** `archive/*` hold abandoned attempts, kept for history
+only. Never merge them.
 
 ## Bootstrap and test
 
