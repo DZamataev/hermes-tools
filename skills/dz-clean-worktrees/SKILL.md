@@ -25,6 +25,10 @@ location; elsewhere they sit next to this file). Python 3 stdlib and `git` only.
 | `wt_scan.py --only PATH` | the same for the one worktree containing PATH |
 | `wt_remove.py [--yes] [--keep-branch] PATH…` | re-checks each PATH, then removes it; dry run without `--yes` |
 
+`dz-clean-worktrees help`: explain to the operator, in their language, what the
+skill finds, what it never deletes and the scripts' options (`wt_scan.py --help`,
+`wt_remove.py --help`); run nothing else.
+
 ## Procedure
 
 1. **Get the folder from the operator.** It is an input, never a guess: if the

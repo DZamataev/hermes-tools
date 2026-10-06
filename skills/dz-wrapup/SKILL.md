@@ -26,6 +26,7 @@ including one nobody watched.
 
 | Invocation | Does |
 |---|---|
+| `dz-wrapup help` | explain these modes to the operator in their language, with when to pick each; run nothing |
 | `dz-wrapup` | steps 1–6: one confirmation, then the chosen actions |
 | `dz-wrapup close` | the work is finished: steps 1–6 with the project's landing runbook added to the actions, then the session is detached (see "Close") |
 | `dz-wrapup auto` | steps 1–3 and 6 with no question; **executes nothing** — every action and every improvement lands in the report as an open item |

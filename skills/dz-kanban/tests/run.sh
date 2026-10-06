@@ -173,6 +173,10 @@ python3 "$KB" setup --repo "$N" --tools "$T" > "$SB/setup-new.txt"
 check "setup: a new repo gets init, profiles, board, bring-up" "grep -q 'kanban-init.sh <board-slug> $N' '$SB/setup-new.txt' && grep -q 'boards create' '$SB/setup-new.txt'"
 check "setup is read-only (no writes through hermes)" "! grep -q 'boards create\|notify-subscribe .* x2' '$FAKE_LOG'"
 
+python3 "$KB" help > "$SB/help.txt"
+check "help lists every command of both scripts" "for c in where setup subscribe unsubscribe status signals boards board-create board-rename board-archive board-delete profiles providers profile-create profile-set profile-delete; do grep -q \"\$c\" '$SB/help.txt' || exit 1; done"
+check "help works as --help too" "python3 '$KB' --help | grep -q 'profile-set'"
+
 # ---- configure: boards ----------------------------------------------------------------------
 KC="$HERE/../scripts/kb_config.py"
 : > "$FAKE_LOG"

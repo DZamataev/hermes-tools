@@ -26,6 +26,7 @@ defaults to the calling one (`$HERMES_SESSION_ID`).
 
 | Ask | Do |
 |---|---|
+| `dz-kanban help` | `KB help`, then explain to the operator, in their language, what each command does and when to use it — grouped as setup, notifications, status/review, configure. Not the raw text. |
 | `dz-kanban` (no argument) | `KB where`, then `KB status`; offer the next step |
 | `dz-kanban setup` | see "Setup" |
 | `dz-kanban subscribe` | `KB subscribe` — this session hears every open card of the board |

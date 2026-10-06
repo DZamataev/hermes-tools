@@ -603,7 +603,20 @@ def cmd_signals(a):
     return 0
 
 
+def cmd_help(a):
+    here = os.path.dirname(os.path.abspath(__file__))
+    print(__doc__.strip())
+    cfg = os.path.join(here, "kb_config.py")
+    if os.path.exists(cfg):
+        r = run(["python3", cfg, "--help-full"])
+        print("\n" + r.stdout.strip())
+    print("\nReview of an orchestration: `kb.py signals` gives the facts; the SKILL.md \"Review\" section is the procedure.")
+    return 0
+
+
 def main(argv=None):
+    if argv is None and sys.argv[1:] in (["help"], ["-h"], ["--help"]) or argv in (["help"],):
+        return cmd_help(None)
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("where", "setup", "subscribe", "unsubscribe", "status", "signals"):

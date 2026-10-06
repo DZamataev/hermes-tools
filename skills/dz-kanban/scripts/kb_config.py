@@ -376,6 +376,9 @@ def cmd_profile_delete(a):
 
 
 def main(argv=None):
+    if (argv if argv is not None else sys.argv[1:]) == ["--help-full"]:
+        print(__doc__.strip())
+        return 0
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("boards"); s.add_argument("--json", action="store_true")

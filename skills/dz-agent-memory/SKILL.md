@@ -35,6 +35,7 @@ Everything goes through `python3 ${HERMES_SKILL_DIR}/scripts/am.py`
 
 | Ask | Run |
 |---|---|
+| `dz-agent-memory help` | `AM --help`; explain to the operator, in their language, each command and when to use it |
 | `dz-agent-memory setup` | see "Setup" |
 | `dz-agent-memory status` — is it working? | `AM status <repo>` |
 | `dz-agent-memory review [since]` — what did the agents learn? | `AM review <repo> --since 7d` |
