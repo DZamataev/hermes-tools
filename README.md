@@ -24,6 +24,11 @@ codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
   repository with implement → review → fix workers on a Hermes Kanban board,
   plus repo-agnostic scripts (init, profiles, cards, chains, the change
   detector and the unattended coordinator job). See [Kanban skill](#kanban-skill).
+- `skills/` — standalone skills: `dz-clean-worktrees` (find worktrees whose
+  work is merged, list them with what/when/merged/pushed/size, remove the
+  picked ones) and `dz-wrapup` (end-of-session close-out: state, summary,
+  process improvements, then the session's worktree). Install by copy:
+  `bash skills/install.sh`.
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
 - `tests/` — repository-level integration and lifecycle checks.
