@@ -11,9 +11,10 @@ ok()  { printf 'ok   %s\n' "$1"; }
 bad() { printf 'FAIL %s\n' "$1"; FAILS=$((FAILS + 1)); }
 check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 
+REAL_HERMES_PY="${HERMES_HOME:-$HOME/.hermes}/hermes-agent/venv/bin/python"
 export HERMES_HOME="$SB/home" DZ_HERMES="$SB/hermes" FAKE_LOG="$SB/calls.log"
 export GIT_CONFIG_GLOBAL="$SB/gitconfig" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-unset HERMES_SESSION_ID DZ_HERMES_TOOLS
+unset HERMES_SESSION_ID DZ_HERMES_TOOLS DZ_HERMES_PYTHON
 git config --global init.defaultBranch main; git config --global commit.gpgsign false
 cp "$HERE/fake_hermes.py" "$DZ_HERMES"; chmod +x "$DZ_HERMES"
 mkdir -p "$HERMES_HOME/kanban/boards/demo" "$HERMES_HOME/kanban/boards/other"
@@ -171,6 +172,80 @@ N="$SB/dev/newproj"; mkdir -p "$N"; git -C "$N" init -q
 python3 "$KB" setup --repo "$N" --tools "$T" > "$SB/setup-new.txt"
 check "setup: a new repo gets init, profiles, board, bring-up" "grep -q 'kanban-init.sh <board-slug> $N' '$SB/setup-new.txt' && grep -q 'boards create' '$SB/setup-new.txt'"
 check "setup is read-only (no writes through hermes)" "! grep -q 'boards create\|notify-subscribe .* x2' '$FAKE_LOG'"
+
+# ---- configure: boards ----------------------------------------------------------------------
+KC="$HERE/../scripts/kb_config.py"
+: > "$FAKE_LOG"
+python3 "$KC" board-create new-board --name "New board" > "$SB/bc.txt"
+check "board-create without --yes is a dry run" "grep -q 'dry run' '$SB/bc.txt' && [ ! -d '$HERMES_HOME/kanban/boards/new-board' ] && [ ! -s '$FAKE_LOG' ]"
+python3 "$KC" board-create new-board --name "New board" --yes > /dev/null
+check "board-create --yes creates it" "[ -f '$HERMES_HOME/kanban/boards/new-board/kanban.db' ]"
+check "board-create refuses a non-kebab slug" "! python3 '$KC' board-create 'Bad Slug' --yes >/dev/null 2>&1"
+python3 "$KC" board-rename demo "Demo board" --yes > "$SB/br.txt"
+check "board-rename calls boards rename and keeps the slug" "grep -q 'kanban boards rename demo Demo board' '$FAKE_LOG' && grep -q 'slug stays demo' '$SB/br.txt'"
+check "board-archive refused while a card runs" "! python3 '$KC' board-archive demo --yes > '$SB/ba.txt' 2>&1 && grep -q 'running on demo' '$SB/ba.txt' && [ -d '$HERMES_HOME/kanban/boards/demo' ]"
+check "the default board is never removed" "! python3 '$KC' board-delete default --yes >/dev/null 2>&1"
+python3 "$KC" board-archive new-board --yes > /dev/null
+check "board-archive moves it to _archived" "[ -d '$HERMES_HOME/kanban/boards/_archived/new-board' ] && [ ! -d '$HERMES_HOME/kanban/boards/new-board' ]"
+python3 "$KC" board-delete other --yes > "$SB/bd.txt"
+check "board-delete exports first, then deletes" "ls '$HERMES_HOME'/backups/kanban/other-*.tar.gz >/dev/null 2>&1 && [ ! -d '$HERMES_HOME/kanban/boards/other' ] && grep -q 'restore: hermes kanban boards import' '$SB/bd.txt'"
+check "export ran before delete" "[ \"\$(grep -n 'boards export other' '$FAKE_LOG' | cut -d: -f1)\" -lt \"\$(grep -n 'boards rm other --delete' '$FAKE_LOG' | cut -d: -f1)\" ]"
+
+# ---- configure: profiles ------------------------------------------------------------------------
+for p in pimpl preview pfix spare; do mkdir -p "$HERMES_HOME/profiles/$p"; done
+printf '{"model": {"default": "opus", "provider": "teamclaude"}, "kanban": {"worker_fallback": "wait"}}' > "$HERMES_HOME/profiles/pimpl/config.yaml"
+printf '{"model": {"default": "claude-sonnet", "provider": "teamclaude"}}' > "$HERMES_HOME/profiles/preview/config.yaml"
+printf '{"model": {"default": "opus", "provider": "teamclaude"}}' > "$HERMES_HOME/profiles/pfix/config.yaml"
+printf '{"providers": {"teamclaude": {"model": "opus", "transport": "anthropic_messages", "models": {"opus": {}}}, "codex-lb": {"model": "gpt-x"}}}' > "$HERMES_HOME/config.yaml"
+python3 "$KC" profiles --board demo > "$SB/pr.txt"
+check "profiles --board lists the board's assignees only" "grep -q '^pimpl' '$SB/pr.txt' && grep -q '^preview' '$SB/pr.txt' && ! grep -q '^spare' '$SB/pr.txt'"
+check "profiles shows model and provider" "grep -q 'pimpl  *teamclaude:opus' '$SB/pr.txt'"
+check "profiles warns impl and review share a family" "grep -q 'share a model family (claude)' '$SB/pr.txt'"
+check "profiles warns fix without worker_fallback wait" "grep -q 'pfix: worker_fallback is allow' '$SB/pr.txt' && ! grep -q 'pimpl: worker_fallback' '$SB/pr.txt'"
+# the fast path reads config.yaml with Hermes' own Python (PyYAML); JSON is valid YAML
+YPY=$(for c in "$REAL_HERMES_PY" /usr/bin/python3 python3; do "$c" -c 'import yaml' 2>/dev/null && { echo "$c"; break; }; done)
+if [ -n "$YPY" ]; then
+  DZ_HERMES_PYTHON="$YPY" python3 "$KC" profiles --board demo > "$SB/pr-yaml.txt"
+  check "profiles via YAML reader matches the CLI path" "diff -q '$SB/pr.txt' '$SB/pr-yaml.txt' >/dev/null"
+else
+  echo "skip YAML reader check (no python with PyYAML)"
+fi
+python3 "$KC" providers > "$SB/prov.txt"
+check "providers lists configured providers and models" "grep -q 'teamclaude .*default opus.*models: opus' '$SB/prov.txt' && grep -q '^codex-lb' '$SB/prov.txt'"
+
+: > "$FAKE_LOG"
+python3 "$KC" profile-set preview --model codex-lb:gpt-x --effort high --fallback teamclaude:opus --fallback codex-lb:gpt-y > "$SB/ps-dry.txt"
+check "profile-set without --yes changes nothing" "grep -q 'dry run' '$SB/ps-dry.txt' && grep -q 'claude-sonnet' '$HERMES_HOME/profiles/preview/config.yaml'"
+python3 "$KC" profile-set preview --model codex-lb:gpt-x --effort high --fallback teamclaude:opus --fallback codex-lb:gpt-y --yes > "$SB/ps.txt"
+cfg() { python3 -c "import json; print(json.load(open('$HERMES_HOME/profiles/$1/config.yaml'))$2)"; }
+check "profile-set writes provider and model" "[ \"\$(cfg preview \"['model']['provider']\")\" = codex-lb ] && [ \"\$(cfg preview \"['model']['default']\")\" = gpt-x ]"
+check "profile-set writes the effort (with --force)" "[ \"\$(cfg preview \"['agent']['reasoning_effort']\")\" = high ]"
+check "profile-set writes an ordered fallback list" "[ \"\$(cfg preview \"['fallback_providers']\")\" = \"[{'provider': 'teamclaude', 'model': 'opus'}, {'provider': 'codex-lb', 'model': 'gpt-y'}]\" ]"
+check "profile-set reports the result" "grep -q 'now: codex-lb:gpt-x effort=high' '$SB/ps.txt'"
+check "profile-set leaves other profiles alone" "[ \"\$(cfg pimpl \"['model']['default']\")\" = opus ]"
+python3 "$KC" profile-set preview --no-fallback --worker-fallback wait --yes > /dev/null
+check "--no-fallback empties the list; --worker-fallback sets kanban.worker_fallback" "[ \"\$(cfg preview \"['fallback_providers']\")\" = '[]' ] && [ \"\$(cfg preview \"['kanban']['worker_fallback']\")\" = wait ]"
+python3 "$KC" profile-set preview --effort inherit --yes > /dev/null
+check "--effort inherit clears it" "[ \"\$(cfg preview \"['agent']['reasoning_effort']\")\" = '' ]"
+check "profile-set rejects a bad effort and a bad model spec" "! python3 '$KC' profile-set preview --effort turbo >/dev/null 2>&1 && ! python3 '$KC' profile-set preview --model gpt-x >/dev/null 2>&1"
+python3 "$KC" profile-set pimpl --model nosuch:m > "$SB/ps-unk.txt"
+check "an unknown provider is flagged" "grep -q 'nosuch is not in the main config' '$SB/ps-unk.txt'"
+python3 "$KC" profile-set pimpl --model teamclaude:opus2 > "$SB/ps-run.txt"
+check "a running card on the profile is named" "grep -q 'running card(s) keep their current model: demo/t_e1' '$SB/ps-run.txt'"
+python3 "$KC" profile-set spare --description "Spare worker" --yes > /dev/null
+check "--description goes through profile describe --text" "[ \"\$(cat '$HERMES_HOME/profiles/spare/description')\" = 'Spare worker' ]"
+
+check "profile-delete refused while a card is open on it" "! python3 '$KC' profile-delete pimpl --yes > '$SB/pd.txt' 2>&1 && grep -q 'open card(s) are assigned to pimpl' '$SB/pd.txt' && [ -d '$HERMES_HOME/profiles/pimpl' ]"
+check "the default profile is never deleted" "! python3 '$KC' profile-delete default --yes >/dev/null 2>&1"
+python3 "$KC" profile-delete spare --yes > "$SB/pd2.txt"
+check "profile-delete exports first, then deletes" "ls '$HERMES_HOME'/backups/profiles/spare-*.tar.gz >/dev/null 2>&1 && [ ! -d '$HERMES_HOME/profiles/spare' ]"
+
+mkdir -p "$HERMES_HOME/skills/software-development/hermes-kanban-development/scripts"
+printf '#!/bin/bash\necho "kanban-profiles $*" >> "%s"\n' "$FAKE_LOG" > "$HERMES_HOME/skills/software-development/hermes-kanban-development/scripts/kanban-profiles.sh"
+python3 "$KC" profile-create q --repo "$P" --model-impl teamclaude:opus --model-review teamclaude:sonnet > "$SB/pc.txt"
+check "profile-create dry run names kanban-profiles.sh and warns on one family" "grep -q 'kanban-profiles.sh q --repo' '$SB/pc.txt' && grep -q 'same model family' '$SB/pc.txt' && ! grep -q 'kanban-profiles q' '$FAKE_LOG'"
+python3 "$KC" profile-create q --repo "$P" --model-review codex-lb:gpt-x --yes > /dev/null
+check "profile-create --yes runs kanban-profiles.sh with the pins" "grep -q 'kanban-profiles q --repo $P --model-review codex-lb:gpt-x' '$FAKE_LOG'"
 
 echo
 [ "$FAILS" -eq 0 ] && echo "all passed" || { echo "$FAILS failed"; exit 1; }

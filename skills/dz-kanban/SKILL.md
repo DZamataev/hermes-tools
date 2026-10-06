@@ -1,6 +1,6 @@
 ---
 name: dz-kanban
-description: "Use when starting, resuming or checking Kanban development: board setup or update, session subscriptions, board status, orchestrator review."
+description: "Use when starting, resuming or checking Kanban development: board setup or update, session subscriptions, board status, orchestrator review, boards and role profiles (models, providers)."
 version: 1.0.0
 author: Denis Zamataev
 license: MIT
@@ -32,6 +32,7 @@ defaults to the calling one (`$HERMES_SESSION_ID`).
 | `dz-kanban unsubscribe` | `KB unsubscribe` (dry run), then `--yes` |
 | `dz-kanban status [7d]` | `KB status --since 7d`, then summarise (see "Status") |
 | `dz-kanban review [7d]` | see "Review" |
+| `dz-kanban configure …` | see "Configure" — boards and role profiles |
 
 ## Setup
 
@@ -128,6 +129,46 @@ what to change in the method, the project's templates or the tools.
 5. Apply only what the operator picks. Method changes go into
    `hermes-tools/kanban` with its tests, never into the installed copy.
 
+## Configure
+
+`python3 ${HERMES_SKILL_DIR}/scripts/kb_config.py` (`KC`). Every write is a
+**dry run without `--yes`**: it prints the exact `hermes` commands. Show them,
+get the operator's word, re-run with `--yes`.
+
+| Ask | Run |
+|---|---|
+| list boards | `KC boards` |
+| create a board | `KC board-create <slug> --name "<title>" [--workdir DIR]` |
+| rename | `KC board-rename <slug> "<new name>"` — display name only; the slug is immutable, so `.kanban/config.env` keeps working |
+| default workspace | `KC board-workdir <slug> <dir>` |
+| archive | `KC board-archive <slug>` — to `kanban/boards/_archived/`, recoverable |
+| delete | `KC board-delete <slug>` — exports to `~/.hermes/backups/kanban/<slug>-<time>.tar.gz`, then hard-deletes |
+| list a board's profiles | `KC profiles --board <slug>` (or `--prefix p`) — model, provider, effort, fallbacks, `worker_fallback` |
+| what providers exist | `KC providers` |
+| create role profiles | `KC profile-create <prefix> --repo DIR [--model-impl P:M --model-review P:M --model-fix P:M]` — runs the method's `kanban-profiles.sh` |
+| change a profile | `KC profile-set <name> [--model P:M] [--effort high\|inherit] [--fallback P:M …\|--no-fallback] [--worker-fallback wait\|allow] [--description TEXT]` |
+| delete a profile | `KC profile-delete <name>` — exports to `~/.hermes/backups/profiles/`, then deletes |
+
+Guards the script enforces: a board with a running card is not archived or
+deleted; a profile with an open card assigned is not deleted; `default` is
+neither. Renaming a board's **slug** is not supported by Hermes — for that,
+export, import `--as <new>`, update `.kanban/config.env`, then delete the old.
+
+Method rules to apply when changing profiles (the script warns on the first
+two, the rest are yours):
+
+- The reviewer runs on a **different model family** than the implementer;
+  same family makes the review a second pass, not an independent one. Say so
+  if quota forces it.
+- impl and fix keep `worker_fallback: wait` (a quota wall requeues the card
+  instead of finishing it on a weaker model); review stays `allow`.
+- `--fallback` replaces the whole list, in order; pass it once per entry.
+- A change binds at the **next spawn**. A running card keeps the model it
+  started with; never kill a worker to apply a change. A per-card
+  `set-model` override beats the profile.
+- Verify the actual route after the next real card:
+  `grep "OpenAI client created" ~/.hermes/profiles/<p>/logs/agent.log`.
+
 ## Tests
 
 `bash ${HERMES_SKILL_DIR}/tests/run.sh` builds a sandbox board database,
@@ -136,4 +177,9 @@ checks status (period, chains, waits vs real blocks, heartbeats, unheard cards,
 ended sessions, pause, no chat id leak), signals, subscribe/unsubscribe
 (open cards only, idempotent, failures, board-scoped, never unpins) and the
 setup plan (older vs locally edited install, profiles, notify env, new repo,
-upstream Hermes).
+upstream Hermes), and configure: dry run by default, board create/rename/
+archive/delete with the running-card guard and export-before-delete, profile
+listing (board filter, family and worker_fallback warnings, YAML reader equal
+to the CLI path), profile-set (model, effort, ordered fallbacks, worker
+fallback, description, running-card notice), profile-delete guard and
+profile-create through kanban-profiles.sh.
