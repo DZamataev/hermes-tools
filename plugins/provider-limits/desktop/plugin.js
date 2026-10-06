@@ -1,4 +1,4 @@
-// Provider limits — remaining quota for custom providers in the status bar.
+// Provider limits — remaining quota for the configured providers in the status bar.
 //
 // A compact chip shows the TIGHTEST remaining bucket across every configured
 // provider (that is the number that actually stops work); tapping it opens a
@@ -352,7 +352,7 @@ function Panel() {
       }),
       !error && providers.length === 0 && jsx('div', {
         className: 'pl-sub',
-        children: 'No custom providers with a known quota API are configured.'
+        children: 'No provider with a known quota API is configured (custom providers in config.yaml, or OPENCODE_GO_API_KEY in .env).'
       }),
       ...providers.map((provider, index) => jsx(ProviderBlock, { provider }, provider.id ?? index)),
       // Last thing in the panel: what the status-bar number means, stated after
@@ -501,7 +501,7 @@ export {
 export default {
   id: ID,
   name: 'Provider limits',
-  description: 'Remaining quota for custom providers (TeamClaude, Codex LB, OpenCode Go) in the status bar.',
+  description: 'Remaining quota for TeamClaude, Codex LB and OpenCode Go in the status bar.',
   register(ctx) {
     rest = path => ctx.rest(path)
 

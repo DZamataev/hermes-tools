@@ -17,9 +17,11 @@ config to drift out of sync):
   Hermes BUILT-IN provider, so it usually has no ``providers:`` entry: it is
   picked up from ``OPENCODE_GO_API_KEY`` being set (base URL from
   ``OPENCODE_GO_BASE_URL``, as Hermes itself does), or from a custom provider
-  whose ``base_url`` points at ``opencode.ai/zen/go``.
+  whose ``base_url`` is on the opencode.ai host under ``/zen/go``. The built-in
+  row is hidden only when such an entry carries the SAME key.
 
-The API key is read from the provider's own ``key_env`` and is sent ONLY to that
+The API key is read the way Hermes resolves it (``key_env`` / ``api_key_env``,
+else an inline ``api_key``; ``enabled: false`` entries are skipped) and is sent ONLY to that
 provider's upstream (``x-api-key`` / ``Authorization``). It is never copied into
 a response, an error string, or a log record: failures are reported as
 ``HTTP <status>`` or the exception's class name, so nothing key-shaped can reach
@@ -30,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -92,10 +95,25 @@ def _providers_config() -> Dict[str, Dict[str, Any]]:
 
 
 def _api_key(entry: Dict[str, Any]) -> str:
-    key_env = entry.get("key_env")
-    if not isinstance(key_env, str) or not key_env:
-        return ""
-    return _env(key_env)
+    """The entry's key, resolved the way Hermes' own runtime resolver does
+    (runtime_provider_custom.py): ``key_env`` or ``api_key_env`` first, then an
+    inline ``api_key``. Reading only ``key_env`` reported a working provider as
+    "no API key configured"."""
+    key_env = entry.get("key_env") or entry.get("api_key_env")
+    if isinstance(key_env, str) and key_env.strip():
+        key = _env(key_env.strip()).strip()
+        if key:
+            return key
+    inline = entry.get("api_key")
+    return inline.strip() if isinstance(inline, str) else ""
+
+
+def _enabled(entry: Dict[str, Any]) -> bool:
+    """``providers.<name>.enabled: false`` hides an entry from Hermes everywhere;
+    a provider Hermes will not use must not take a slot in the chip either."""
+    from hermes_cli.config import is_provider_enabled
+
+    return is_provider_enabled(entry)
 
 
 def _env(name: str) -> str:
@@ -111,9 +129,34 @@ OPENCODE_GO_KEY_ENV = "OPENCODE_GO_API_KEY"
 OPENCODE_GO_BASE_URL_ENV = "OPENCODE_GO_BASE_URL"
 
 
+def _is_official_opencode_host(url: str) -> bool:
+    # Exact hostname, as Hermes compares it (utils.base_url_hostname): a suffix
+    # test on the raw netloc accepted `evilopencode.ai` and rejected
+    # `OpenCode.AI` and `opencode.ai:443`.
+    host = (urlsplit(url).hostname or "").lower()
+    return host == "opencode.ai" or host.endswith(".opencode.ai")
+
+
 def _is_opencode_go_url(url: str) -> bool:
+    # `/zen/go` as a whole path segment: `/zen/gopher` is not the Go relay.
+    path = urlsplit(url).path.rstrip("/").lower()
+    return _is_official_opencode_host(url) and (path == "/zen/go" or path.startswith("/zen/go/"))
+
+
+def _opencode_go_api_base(url: str) -> str:
+    """The API root the usage route hangs off (`{root}/usage`).
+
+    The relay is commonly configured without `/v1` — that is the natural
+    spelling for its anthropic-messages models — but `/zen/go/usage` is a 404;
+    only `/zen/go/v1/usage` answers. Hermes heals the same URL the same way
+    (models.py::normalize_opencode_base_url): `/v1` is added on opencode.ai
+    hosts only, and a custom proxy URL is left exactly as configured.
+    """
+    url = url.strip().rstrip("/")
     parts = urlsplit(url)
-    return parts.netloc.endswith("opencode.ai") and parts.path.rstrip("/").startswith("/zen/go")
+    if _is_official_opencode_host(url) and not parts.path.rstrip("/").endswith("/v1"):
+        return urlunsplit(parts._replace(path=parts.path.rstrip("/") + "/v1"))
+    return url
 
 
 def _origin(url: str) -> str:
@@ -139,8 +182,8 @@ def _adapter_for(entry: Dict[str, Any]) -> Optional[str]:
 def _base_url_for(kind: str, entry: Dict[str, Any]) -> str:
     if kind == "opencode-go":
         # The usage route hangs off the API path (/zen/go/v1/usage), not the
-        # service root, so the configured URL is kept whole.
-        return str(entry.get("base_url") or entry.get("api") or "").rstrip("/")
+        # service root, so the configured path is kept.
+        return _opencode_go_api_base(str(entry.get("base_url") or entry.get("api") or ""))
     raw = entry.get("api") if kind == "teamclaude" else entry.get("base_url")
     raw = raw or entry.get("base_url") or entry.get("api") or ""
     return _origin(str(raw))
@@ -150,7 +193,7 @@ def discover_targets() -> List[Dict[str, Any]]:
     """Every configured provider this plugin knows how to query, in config order."""
     targets = []
     for name, entry in _providers_config().items():
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or not _enabled(entry):
             continue
         kind = _adapter_for(entry)
         if not kind:
@@ -169,28 +212,40 @@ def discover_targets() -> List[Dict[str, Any]]:
     # OpenCode Go is a built-in provider: no `providers:` entry, just a key in
     # ~/.hermes/.env. Shown only when that key is set — without it the user is
     # not subscribed, and a permanent "no API key" row would be noise. Skipped
-    # when a custom entry already points at the same service.
-    if not any(t["kind"] == "opencode-go" for t in targets):
-        key = _env(OPENCODE_GO_KEY_ENV)
-        if key:
-            base_url = (_env(OPENCODE_GO_BASE_URL_ENV) or OPENCODE_GO_DEFAULT_BASE_URL).rstrip("/")
-            targets.append({
-                "id": "opencode-go",
-                "label": "OpenCode Go",
-                "kind": "opencode-go",
-                "base_url": base_url,
-                "key": key,
-            })
+    # only when a custom entry already reports the SAME subscription — the same
+    # key. Matching on the adapter kind alone let any Go-shaped entry hide it:
+    # one with no usable key, or a second subscription with a different one.
+    key = _env(OPENCODE_GO_KEY_ENV).strip()
+    if key and not any(t["kind"] == "opencode-go" and t["key"] == key for t in targets):
+        targets.append({
+            "id": "opencode-go",
+            "label": "OpenCode Go",
+            "kind": "opencode-go",
+            "base_url": _opencode_go_api_base(_env(OPENCODE_GO_BASE_URL_ENV) or OPENCODE_GO_DEFAULT_BASE_URL),
+            "key": key,
+        })
     return targets
 
 
 # --- normalisation ----------------------------------------------------------
 
+def _number(value: Any) -> Optional[float]:
+    """A finite number, or None. `bool` is rejected although Python counts it as
+    an int (`true` would read as 1), and so are NaN/inf: `min`/`max` clamp NaN
+    to an end of the range, which turned `percent: NaN` into "100% left"."""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _pct(value: Any) -> Optional[float]:
     """A 0..1 ratio as a percentage, or None when the upstream had no number."""
-    try:
-        ratio = float(value)
-    except (TypeError, ValueError):
+    ratio = _number(value)
+    if ratio is None:
         return None
     return max(0.0, min(100.0, ratio * 100.0))
 
@@ -301,10 +356,9 @@ def _codex_limits(rows: Any, source: str) -> List[Dict[str, Any]]:
     for row in rows or []:
         if not isinstance(row, dict):
             continue
-        try:
-            max_value = float(row.get("max_value"))
-            remaining = float(row.get("remaining_value"))
-        except (TypeError, ValueError):
+        max_value = _number(row.get("max_value"))
+        remaining = _number(row.get("remaining_value"))
+        if max_value is None or remaining is None:
             continue
         # A zero/negative ceiling carries no ratio. Report it as an exhausted
         # limit rather than dropping the row: a quota of 0 means "nothing may be
@@ -383,12 +437,12 @@ def _codex_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     pool = data.get("account_pool_usage")
     pool_windows = []
     for slot, label in (("primary", "5 hours"), ("secondary", "Week")):
-        remaining = pool.get(slot) if isinstance(pool, dict) else None
-        if isinstance(remaining, (int, float)):
+        remaining = _number(pool.get(slot)) if isinstance(pool, dict) else None
+        if remaining is not None:
             pool_windows.append({
                 "key": slot,
                 "label": label,
-                "remainingPct": round(max(0.0, min(100.0, float(remaining))), 1),
+                "remainingPct": round(max(0.0, min(100.0, remaining)), 1),
             })
 
     return {"buckets": buckets, "accounts": [], "poolWindows": pool_windows}
@@ -413,9 +467,13 @@ def _opencode_go_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     the remainder can overstate by under one point — never understate.
 
     ``status`` is ``"ok"`` or ``"rate-limited"`` (the producer also forces
-    percent to 100 then). It is matched against the known-good value: any other
-    word is shown as exhausted rather than trusted, so a new throttling state
-    cannot slip through as a healthy number.
+    percent to 100 then). A status WORD is matched against the known-good value:
+    any word other than ``ok`` is shown as exhausted rather than trusted, so a
+    new throttling state cannot slip through as a healthy number. An ABSENT
+    status does not vote either way — ``formatUsage`` always sends one, so its
+    absence says nothing about throttling, and ``percent`` (which the producer
+    pins to 100 when limited) decides alone; the row is captioned
+    "status unknown".
 
     The dollar ceilings ($ per window) are not in the payload and differ
     between the Go and Go Plus plans, so no absolute figure is invented here.
@@ -429,10 +487,7 @@ def _opencode_go_payload(data: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(row, dict):
             continue
         status = str(row.get("status") or "")
-        try:
-            used = float(row.get("percent"))
-        except (TypeError, ValueError):
-            used = None
+        used = _number(row.get("percent"))
         if status and status != "ok":
             remaining: Optional[float] = 0.0
         elif used is None:

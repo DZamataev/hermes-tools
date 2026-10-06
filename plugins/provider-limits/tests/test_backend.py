@@ -98,7 +98,6 @@ for case in hostile:
             fn(case)
         except Exception as exc:  # noqa: BLE001 — that is the point
             check(f"hostile-{fn.__name__}", False, f"{case} raised {type(exc).__name__}: {exc}")
-check("hostile-no-throw", True)
 
 # A key must never reach a response object.
 check("key-not-in-payload", all(
@@ -139,6 +138,16 @@ check("ocgo-unknown-status-not-trusted", ocgo_one(status="suspended", percent=5)
 check("ocgo-missing-percent-no-row", ocgo_one(status="ok") == {})
 check("ocgo-clamps", ocgo_one(status="ok", percent=140).get("remainingPct") == 0.0
       and ocgo_one(status="ok", percent=-3).get("remainingPct") == 100.0)
+# An absent status does not vote: percent decides, and the row says it is
+# unsure. Pinned both ways — this is a decision, not an accident.
+absent = ocgo_one(percent=30)
+check("ocgo-absent-status-percent-decides",
+      absent.get("remainingPct") == 70.0 and "status unknown" in absent.get("detail", ""), str(absent))
+check("ocgo-empty-status-percent-decides", ocgo_one(status="", percent=30).get("remainingPct") == 70.0)
+# NaN/inf/bool are not numbers: min/max clamped NaN to "100% left", and `true`
+# read as 1% used. No row beats a confident wrong one.
+check("ocgo-nonfinite-no-row",
+      all(ocgo_one(status="ok", percent=v) == {} for v in (float("nan"), float("inf"), "nan", True, False)))
 
 for case in [{}, {"usage": None}, {"usage": "x"}, {"usage": {"rolling": None}},
              {"usage": {"rolling": "x", "weekly": 5}},
@@ -147,7 +156,15 @@ for case in [{}, {"usage": None}, {"usage": "x"}, {"usage": {"rolling": None}},
         pl._opencode_go_payload(case)
     except Exception as exc:  # noqa: BLE001
         check("ocgo-hostile", False, f"{case} raised {type(exc).__name__}: {exc}")
-check("ocgo-hostile-no-throw", True)
+
+# The same class in the older parsers: NaN/bool numbers must not draw a row.
+check("codex-nonfinite-no-row", pl._codex_payload({"limits": [
+    {"limit_window": "5h", "limit_type": "credits", "max_value": 100, "remaining_value": float("nan")},
+    {"limit_window": "7d", "limit_type": "credits", "max_value": True, "remaining_value": 1}]})["buckets"] == [])
+check("codex-pool-nonfinite-no-row", pl._codex_payload({"account_pool_usage": {
+    "primary": float("nan"), "secondary": True}})["poolWindows"] == [])
+check("teamclaude-nonfinite-no-row", pl._teamclaude_payload({"aggregate": {
+    "fiveHour": {"remaining": float("nan")}, "weeklyShared": {"remaining": True}}})["buckets"] == [])
 
 
 # --- discovery --------------------------------------------------------------
@@ -174,16 +191,67 @@ check("ocgo-builtin-discovered",
           ("opencode-go", "opencode-go", "https://opencode.ai/zen/go/v1")], str(found))
 # No key = not subscribed: no permanent "no API key" row for every user.
 check("ocgo-absent-without-key", [t["kind"] for t in discover(TC, {})] == ["teamclaude"])
-# Hermes honours OPENCODE_GO_BASE_URL; so must the usage call.
+# Hermes honours OPENCODE_GO_BASE_URL; so must the usage call. A custom proxy
+# keeps its path exactly as configured.
 check("ocgo-base-url-override", discover({}, {"OPENCODE_GO_API_KEY": "k",
                                               "OPENCODE_GO_BASE_URL": "https://go.example/zen/go/v1/"})
       [0]["base_url"] == "https://go.example/zen/go/v1")
-# A custom provider pointed at Go is that provider — no second, duplicate row.
+check("ocgo-proxy-path-untouched", discover({}, {"OPENCODE_GO_API_KEY": "k",
+                                                 "OPENCODE_GO_BASE_URL": "https://go.example/relay"})
+      [0]["base_url"] == "https://go.example/relay")
+# On the official host the relay is often written without /v1 (the natural
+# spelling for anthropic-messages models), and /zen/go/usage is a 404. Hermes
+# adds /v1 there (normalize_opencode_base_url); so must the usage call.
+check("ocgo-official-v1-added",
+      discover({}, {"OPENCODE_GO_API_KEY": "k", "OPENCODE_GO_BASE_URL": "https://opencode.ai/zen/go/"})
+      [0]["base_url"] == "https://opencode.ai/zen/go/v1"
+      and discover({"go": {"base_url": "https://opencode.ai/zen/go", "key_env": "G"}}, {"G": "g"})
+      [0]["base_url"] == "https://opencode.ai/zen/go/v1")
+
+
+def go_entry(url: str) -> list:
+    return [t["kind"] for t in discover({"x": {"base_url": url, "key_env": "X"}}, {"X": "x"})]
+
+
+# Exact hostname, whole path segment — the way Hermes itself matches it.
+check("ocgo-url-matches-official-spellings",
+      all(go_entry(u) == ["opencode-go"] for u in (
+          "https://opencode.ai/zen/go/v1", "https://OpenCode.AI/zen/go/v1",
+          "https://opencode.ai:443/zen/go/v1", "https://opencode.ai/zen/go")),
+      str([go_entry(u) for u in ("https://OpenCode.AI/zen/go/v1", "https://opencode.ai:443/zen/go/v1")]))
+check("ocgo-url-rejects-lookalikes",
+      all(go_entry(u) == [] for u in (
+          "https://evilopencode.ai/zen/go/v1", "https://opencode.ai.example/zen/go/v1",
+          "https://opencode.ai/zen/gopher/v1", "https://proxy.example/opencode.ai/zen/go/v1")),
+      str([go_entry(u) for u in ("https://evilopencode.ai/zen/go/v1", "https://opencode.ai/zen/gopher/v1")]))
+
+# A custom entry carrying the SAME key is the same subscription — one row.
 custom = {"my-go": {"name": "Go", "base_url": "https://opencode.ai/zen/go/v1", "key_env": "MY_GO"}}
+found = discover(custom, {"OPENCODE_GO_API_KEY": "k", "MY_GO": "k"})
+check("ocgo-same-key-not-duplicated",
+      [(t["id"], t["kind"], t["base_url"]) for t in found]
+      == [("my-go", "opencode-go", "https://opencode.ai/zen/go/v1")], str(found))
+# A different key is a different subscription: hiding the built-in one would
+# drop a real limit from the panel.
 found = discover(custom, {"OPENCODE_GO_API_KEY": "k", "MY_GO": "m"})
-check("ocgo-custom-entry-not-duplicated",
-      [(t["id"], t["kind"], t["base_url"], t["key"]) for t in found]
-      == [("my-go", "opencode-go", "https://opencode.ai/zen/go/v1", "m")], str(found))
+check("ocgo-other-subscription-kept", [t["id"] for t in found] == ["my-go", "opencode-go"], str(found))
+# A Go-shaped entry with no usable key must not hide the working built-in row.
+found = discover({"broken": {"base_url": "https://opencode.ai/zen/go/v1"}}, {"OPENCODE_GO_API_KEY": "k"})
+check("ocgo-keyless-entry-does-not-hide-builtin",
+      [(t["id"], bool(t["key"])) for t in found] == [("broken", False), ("opencode-go", True)], str(found))
+# `enabled: false` hides an entry from Hermes everywhere; here too.
+found = discover({"off": {"base_url": "https://opencode.ai/zen/go/v1", "key_env": "K", "enabled": False},
+                  **TC}, {"OPENCODE_GO_API_KEY": "k", "K": "k"})
+check("disabled-entry-skipped", [t["id"] for t in found] == ["teamclaude", "opencode-go"], str(found))
+check("disabled-string-false-skipped",
+      discover({"off": {**TC["teamclaude"], "enabled": "false"}}, {}) == [])
+# Keys are resolved the way Hermes resolves them: key_env, api_key_env, inline.
+keys = {n: t["key"] for n, t in ((t["id"], t) for t in discover({
+    "a": {**TC["teamclaude"], "key_env": "A"},
+    "b": {**TC["teamclaude"], "api_key_env": "B"},
+    "c": {**TC["teamclaude"], "api_key": " inline "},
+    "d": {**TC["teamclaude"], "key_env": "EMPTY", "api_key": "fallback"}}, {"A": "a", "B": "b"}))}
+check("key-resolution-like-hermes", keys == {"a": "a", "b": "b", "c": "inline", "d": "fallback"}, str(keys))
 # Zen (pay-as-you-go) has no Go plan behind it; it must not be mistaken for Go.
 check("ocgo-zen-not-matched",
       discover({"zen": {"base_url": "https://opencode.ai/zen/v1"}}, {}) == [])
@@ -198,7 +266,7 @@ import httpx  # noqa: E402
 seen: dict = {}
 
 
-def fetch(status: int, body) -> dict:
+def fetch(status: int, body, kind: str = "opencode-go") -> dict:
     def handler(request: httpx.Request) -> httpx.Response:
         seen["url"] = str(request.url)
         seen["auth"] = request.headers.get("authorization")
@@ -207,7 +275,7 @@ def fetch(status: int, body) -> dict:
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             return await pl._fetch_target(client, {
-                "id": "opencode-go", "label": "OpenCode Go", "kind": "opencode-go",
+                "id": kind, "label": kind, "kind": kind,
                 "base_url": "https://opencode.ai/zen/go/v1", "key": "SECRET-KEY"})
     return asyncio.run(run())
 
@@ -220,6 +288,10 @@ check("ocgo-fetch-ok", ok["ok"] is True and len(ok["buckets"]) == 3, str(ok))
 denied = fetch(403, {"type": "error", "error": {"type": "EntitlementError"}})
 check("ocgo-403-explained", denied["error"] == "HTTP 403 (no OpenCode Go subscription)", str(denied["error"]))
 check("ocgo-401-plain", fetch(401, {})["error"] == "HTTP 401")
+# The subscription caption belongs to OpenCode Go only: a 403 from TeamClaude or
+# codex-lb is a rejected key and must say just that.
+others = {k: fetch(403, {}, kind=k)["error"] for k in ("teamclaude", "codex-lb")}
+check("403-caption-only-for-opencode-go", others == {"teamclaude": "HTTP 403", "codex-lb": "HTTP 403"}, str(others))
 check("ocgo-key-not-in-result", "SECRET" not in json.dumps([ok, denied]))
 
 
@@ -257,7 +329,6 @@ for case in [{}, {"status": "x"}, {"components": "x"}, {"components": [None, 5]}
         pl._status_payload(PAGE, case)
     except Exception as exc:  # noqa: BLE001
         check("status-hostile", False, f"{case} raised {type(exc).__name__}: {exc}")
-check("status-hostile-no-throw", True)
 
 
 # --- report -----------------------------------------------------------------
