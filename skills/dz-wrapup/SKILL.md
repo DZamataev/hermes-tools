@@ -1,6 +1,6 @@
 ---
 name: dz-wrapup
-description: "Use when the operator ends a work session (wrap up, done for today, close out) or asks what past wrap-ups found."
+description: "Use when the operator ends a work session (wrap up, done for today, close out, finish and close the session) or asks what past wrap-ups found."
 version: 1.0.0
 author: Denis Zamataev
 license: MIT
@@ -27,6 +27,7 @@ including one nobody watched.
 | Invocation | Does |
 |---|---|
 | `dz-wrapup` | steps 1–6: one confirmation, then the chosen actions |
+| `dz-wrapup close` | the work is finished: steps 1–6 with the project's landing runbook added to the actions, then the session is detached (see "Close") |
 | `dz-wrapup auto` | steps 1–3 and 6 with no question; **executes nothing** — every action and every improvement lands in the report as an open item |
 | `dz-wrapup review` | no new wrap-up: walks the open items of past reports (see "Review") |
 
@@ -59,10 +60,15 @@ Session: <session id or title>  ·  Repos: <paths>  ·  Worktree: <path or none>
 
 ## State left behind
 <per repo: branch, uncommitted, unpushed; worktree: kept because …>
+
+## Next session
+<only when work is unfinished: where to start, the exact next command, what to read first>
 ```
 
 `[ ]` open, `[x]` done, `[-]` declined. Improvements carry the ready text so
-`review` can apply them without reconstructing the session. After writing,
+`review` can apply them without reconstructing the session. To update the
+report, rewrite the whole file; section-by-section patches have left
+duplicated sections behind. After writing,
 add or update the report's line in `INBOX.md`:
 `- [<n> open] <date> <project> — <goal>  → <file name>`; remove the line when
 nothing in the report is open. Print the report path in the final message.
@@ -141,7 +147,8 @@ numbered action list drawn only from what step 1 found — for example:
 2. push `<branch>`
 3. stop `<process>` started for `<reason>`
 4. apply improvement N to `<skill/memory/AGENTS.md>`
-5. write a handoff note (only when work is unfinished)
+5. fill the report's "Next session" section (only when work is unfinished —
+   the report is the handoff; no separate file)
 6. remove worktree `<path>` (`<size>`, merged into `<branch>`, pushed)
 
 Ask which to run (numbers, `all`, `none`). Offer only actions that apply.
@@ -181,3 +188,43 @@ each before offering it: the destination may already contain the rule, the
 branch may already be pushed, the worktree may already be gone — mark those
 `[x]` (already done) without asking. Ask which to apply, apply them as in
 step 5, update the checkboxes and `INBOX.md`.
+
+## Close
+
+`dz-wrapup close` says the work is done, not paused. Two additions to the
+ordinary run.
+
+**Landing runbook.** In step 1, find how this project lands finished work and
+turn each of its steps into an action, in its order, placed after commit and
+before the worktree. Look, first match wins:
+
+1. a skill that owns landing for this repository (its description names the
+   repository or its landing — e.g. a rollout/release skill);
+2. the repository's agent rules (`AGENTS.md`, `CLAUDE.md`) and the runbooks
+   they point to for merging, git operations or releases;
+3. `.kanban/config.env`: `KANBAN_BASE_BRANCH`, `KANBAN_GATE`,
+   `KANBAN_LAND_CHECKS`, and the per-repo runbook it names;
+4. none: merge the session's branch into the integration branch, run the
+   project's test command, push, move the tracker item.
+
+Quote the source of each step in the action list (`from agents/gitOps.md`).
+A runbook step this session cannot do (a device check, a manual approval)
+becomes an open item in the report, not a skipped one. Steps run in the
+runbook's order; on the first failure stop the runbook, keep the remaining
+steps open, and do not detach the session.
+
+**Detach the session**, as the last action, after the worktree:
+
+```bash
+python3 ${HERMES_SKILL_DIR}/scripts/session_close.py            # dry run: subscriptions, open cards, pin
+python3 ${HERMES_SKILL_DIR}/scripts/session_close.py --yes
+```
+
+It works on the calling session (`$HERMES_SESSION_ID`) and its whole
+compression lineage, so subscriptions made before a context compression are
+found too. It removes every `tui:<session>` Kanban subscription on every board
+and unpins the session; Hermes Desktop moves it out of Pinned at once.
+Cards on those boards that are not done are only **warned about** — list
+them in the report under "State left behind" with board and id, so the next
+orchestrating session can subscribe to them. Never stop on them.
+`--keep-pin` / `--keep-subs` skip a half when the operator declined it.
