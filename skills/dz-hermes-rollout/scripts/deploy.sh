@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Step 3/3. Update the live install to the verified integration branch and restart what runs it:
 # fast-forward, Python deps, desktop rebuilt from the install into the app bundle, the optional
-# post-deploy hook, gateway restart, app relaunch.
+# post-deploy hook, gateway restart, a restart of backends other machines' Desktops started here
+# over SSH, app relaunch.
 #
 #   deploy.sh --dry-run     plan only
 #   deploy.sh               deploy (refuses unless verify.sh recorded the current branch sha)
@@ -42,9 +43,15 @@ if ! $unverified; then
   fi
 fi
 # Deploy quits every Hermes window, and an app quit kills its running turns (the gateway restart
-# drains its own). Check every home whose window is open: the live one and the test instance's.
+# drains its own), and so does stopping an SSH backend. Check every home with a window or an SSH
+# backend open: the live one and the test instance's.
 live=""
-live_app_running && live+=$(live_turns "$LIVE_HOME" | sed 's/^/live app: /')$'\n'
+owners=""
+live_app_running && owners="live app"
+nssh=$(ssh_backends | wc -l | tr -d ' ')
+[ "$nssh" -gt 0 ] && owners="${owners:+$owners, }ssh backend"
+# The live app and the SSH backends share the live home and its logs: check it once.
+[ -n "$owners" ] && live+=$(live_turns "$LIVE_HOME" | sed "s/^/$owners: /")$'\n'
 test_instance_running && live+=$(live_turns "$TEST_HOME/home" | sed 's/^/test instance: /')
 live=$(echo "$live" | sed '/^$/d')
 if [ -n "$live" ]; then
@@ -59,7 +66,7 @@ echo "install $(git -C "$INSTALL" rev-parse --short "$old") → $(git -C "$FORK"
 
 if $dry_run; then
   $push && echo "would run: git -C $FORK push $PUSH_REMOTE $BRANCH"
-  echo "would: quit Hermes, fast-forward $INSTALL, sync deps (launcher), rebuild desktop into $APP$([ -n "$POST_DEPLOY" ] && echo ", run the post-deploy hook")$([ "$RESTART_GATEWAY" = 1 ] && echo ", restart gateway")$($relaunch && echo ", open $APP")"
+  echo "would: quit Hermes, fast-forward $INSTALL, sync deps (launcher), rebuild desktop into $APP$([ -n "$POST_DEPLOY" ] && echo ", run the post-deploy hook")$([ "$RESTART_GATEWAY" = 1 ] && echo ", restart gateway")$([ "$nssh" -gt 0 ] && echo ", restart $nssh SSH backend(s)")$($relaunch && echo ", open $APP")"
   ok "dry run"
   exit 0
 fi
@@ -109,6 +116,13 @@ fi
 if [ "$RESTART_GATEWAY" = 1 ]; then
   step "gateway restart"
   (cd "$INSTALL" && "$HB" gateway restart) || fail "gateway restart failed"
+fi
+
+# After the gateway, before the app reopens: SSH-started backends serve the old code until they
+# stop; the Desktop that owns each respawns it on the next request.
+if [ -n "$(ssh_backends)" ]; then
+  step "restart SSH backends"
+  stop_ssh_backends
 fi
 
 if $relaunch; then

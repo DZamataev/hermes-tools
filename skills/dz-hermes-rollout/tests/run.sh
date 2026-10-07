@@ -96,14 +96,35 @@ $now,300 INFO tui_gateway.server: tui prompt accepted: ui_session=b agent_sessio
 $old,100 INFO tui_gateway.server: tui prompt accepted: ui_session=c agent_session_id=S_CRASHED kind=user
 EOF
 echo "$now,400 INFO tui_gateway.server: tui prompt accepted: ui_session=d agent_session_id=S_PROFILE kind=process_complete" > "$H/profiles/p1/logs/agent.log"
+# Desktop's `hermes serve` logs its turns to gui.log, not agent.log.
+echo "$now,500 INFO tui_gateway.server: tui prompt accepted: ui_session=e agent_session_id=S_GUI kind=user" > "$H/logs/gui.log"
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$H" | cut -d' ' -f1 | sort | tr '\n' ' ')
-check "live_turns: open turns in home and profiles, not finished or stale ones" '[ "$turns" = "S_LIVE S_PROFILE " ]'
+check "live_turns: open turns in agent.log, gui.log and profiles, not finished or stale ones" '[ "$turns" = "S_GUI S_LIVE S_PROFILE " ]'
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$SB/nohome")
 check "live_turns: a home without logs has none"       '[ -z "$turns" ]'
 # A fresh install's agent.log has no tui lines yet: none, and success — deploy.sh runs under set -e.
 Q="$SB/quiet"; mkdir -p "$Q/logs"; echo "$now,100 INFO gateway.run: started" > "$Q/logs/agent.log"
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$Q"); rc=$?
 check "live_turns: a log without tui lines has none, exit 0" '[ -z "$turns" ] && [ $rc -eq 0 ]'
+
+# ── backends that a Desktop on another machine started over SSH ──
+# A stand-in process with the argv of such a backend; one of another home must be left alone.
+fake_backend() { python3 -c 'import time; time.sleep(120)' serve --isolated --ssh-session-token-file "$1/desktop-ssh/own/nonce.token" >/dev/null 2>&1 </dev/null & echo $!; }
+mine=$(fake_backend "$LIVE"); other=$(fake_backend "$SB/other-home"); sleep 0.5
+lib() { bash -c '. "$1"; trap - EXIT; shift; "$@"' _ "$S/lib.sh" "$@"; }
+found=$(ROLLOUT_CONFIG="$SB/cfg/config.sh" lib ssh_backends | tr '\n' ' ')
+check "ssh_backends: lists the live home's SSH backend only" '[ "$found" = "$mine " ]'
+echo "$now,600 INFO tui_gateway.server: tui prompt accepted: ui_session=f agent_session_id=S_REMOTE kind=user" > "$LIVE/logs/gui.log"
+out=$("$S/deploy.sh" --dry-run 2>&1)
+check "deploy dry run: a turn on an SSH backend is reported" '[[ $out == *"ssh backend: S_REMOTE"* ]]'
+check "deploy dry run: plans the SSH backend restart" '[[ $out == *"restart 1 SSH backend(s)"* ]]'
+out=$("$S/deploy.sh" 2>&1)
+check "deploy refuses while an SSH backend has a turn running" '[[ $out == *"DEPLOY FAILED"*"turn(s) still running"* ]] && kill -0 '"$mine"
+rm "$LIVE/logs/gui.log"
+ROLLOUT_CONFIG="$SB/cfg/config.sh" lib stop_ssh_backends >/dev/null
+check "stop_ssh_backends: stops the live home's SSH backend" '! kill -0 '"$mine"' 2>/dev/null'
+check "stop_ssh_backends: leaves another home's backend running" 'kill -0 '"$other"
+kill "$mine" "$other" 2>/dev/null; wait "$mine" "$other" 2>/dev/null
 
 # ── state.sh: modes, install kind, harness ──
 st() { ROLLOUT_HARNESS_PID=1 "$S/state.sh" | grep "^$1=" | cut -d= -f2-; }

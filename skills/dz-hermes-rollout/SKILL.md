@@ -99,7 +99,7 @@ with clean upstream; only new ones are ours. Commit the test to the worktree bra
 - **When `state.sh` says `hermes_desktop=yes`, always `deploy.sh --detach`**, and tell the operator
   the app will close and reopen: deploy quits every Hermes window and the session that ran it dies.
 - **Live turns block deploy.** Deploy closes every Hermes window, the test instance included, and
-  an app quit kills its running turns (the gateway restart drains its own). `deploy.sh` lists the
+  stops SSH-started backends; both kill their running turns (the gateway restart drains its own). `deploy.sh` lists the
   running turns and refuses; `--dry-run` shows them too. The operator has usually just been using
   the test instance, so ask them to let its turns end; pass `--ignore-live-turns` only on their
   word.
@@ -113,7 +113,9 @@ Quit every Hermes window by process path (the test instance shares the bundle id
 --ff-only` in the install → `<install>/.hermes/bin/hermes --version` (the first launch re-syncs the
 environment) → `hermes_cli.source_completion --finish-update --desktop` (the tail `hermes update`
 runs: TUI, web UI, packaged desktop, config migration, skills sync) → copy the build over the app
-bundle when it differs → the post-deploy hook → `hermes gateway restart` → reopen the app.
+bundle when it differs → the post-deploy hook → `hermes gateway restart` → stop the backends that
+a Desktop on another machine started here over SSH (`hermes serve … --ssh-session-token-file
+<home>/desktop-ssh/…`; that Desktop respawns them on the new code) → reopen the app.
 
 ## Pitfalls
 
@@ -126,6 +128,10 @@ bundle when it differs → the post-deploy hook → `hermes gateway restart` →
 - **The runtime is the environment behind `<install>/.hermes/bin/hermes`**, not a `venv/` folder in
   the checkout.
 - **`gateway restart` reloads neither plugins nor the desktop backend**; only an app restart does.
+- **A backend another machine's Desktop started over SSH outlives the app and the gateway.** Left
+  running after a deploy, it serves old code that imports the new files: plugin routes answer 404
+  "Headless backend (hermes serve)" and `projects.tree` breaks its wire contract. Deploy stops
+  them; one started by hand still needs a stop, and the remote Desktop reconnects by itself.
 - **Test instance: "the '<provider>' package is required … lazy installs are disabled"** comes
   from the fork's environment, not the code: provider SDKs are lazy extras, and the environment
   refuses lazy installs from a process that is not the install's own. Install the extra into the

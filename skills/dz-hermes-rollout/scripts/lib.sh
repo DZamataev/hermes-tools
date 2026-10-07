@@ -112,13 +112,41 @@ test_instance_running() { pgrep -f -- "/Contents/MacOS/Hermes $MARK" >/dev/null;
 # Any Hermes window other than the test instance (the Dock app, a release copy).
 live_app_running() { pgrep -fl "/Contents/MacOS/Hermes" | grep -v -- "$MARK" | grep -q 'Hermes$'; }
 
+# Backends a Hermes Desktop on ANOTHER machine started here over SSH for the live home
+# (`hermes serve --isolated --ssh-session-token-file <home>/desktop-ssh/...`). Neither app quit
+# nor gateway restart touches them, so after a deploy they keep serving the old code while
+# imports load the new files: plugin routes 404 and wire contracts break. The remote Desktop
+# respawns one on demand, so stopping them is the restart. Prints one pid per line.
+ssh_backends() {
+  ps -axo pid=,args= | awk -v dir="--ssh-session-token-file $LIVE_HOME/desktop-ssh/" \
+    'index($0, dir) && index($0, " serve ") { print $1 }'
+}
+stop_ssh_backends() {
+  local pids p alive
+  pids=$(ssh_backends)
+  [ -n "$pids" ] || return 0
+  echo "stopping SSH backend(s): $(echo "$pids" | tr '\n' ' ')(the remote Desktop respawns them on the new code)"
+  # shellcheck disable=SC2086  # one pid per word
+  kill -TERM $pids 2>/dev/null || true
+  for _ in $(seq 1 60); do
+    alive=""
+    for p in $pids; do kill -0 "$p" 2>/dev/null && alive+="$p "; done
+    [ -n "$alive" ] || return 0
+    sleep 1
+  done
+  fail "SSH backend(s) did not stop within 60 s: $alive"
+}
+
 # Desktop turns still running in a Hermes home: a "tui prompt accepted" with no later
 # "tui turn finished" for the same session, within the last $2 hours (default 12; an older one is
-# left over from a crash). Prints "<session id> since <time>" per live turn.
+# left over from a crash). Prints "<session id> since <time>" per live turn. A desktop backend
+# (`hermes serve`) logs its turns to gui.log, the CLI and gateway to agent.log: read both.
 live_turns() {  # $1 = Hermes home, $2 = window in hours
   local cutoff f logs=()
   cutoff=$(date -v-"${2:-12}"H '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "-${2:-12} hours" '+%Y-%m-%d %H:%M:%S')
-  for f in "$1/logs/agent.log" "$1"/profiles/*/logs/agent.log; do [ -f "$f" ] && logs+=("$f"); done
+  for f in "$1/logs/agent.log" "$1/logs/gui.log" "$1"/profiles/*/logs/agent.log "$1"/profiles/*/logs/gui.log; do
+    [ -f "$f" ] && logs+=("$f")
+  done
   [ ${#logs[@]} -gt 0 ] || return 0
   # `|| true`: no tui lines yet (a fresh install) is grep exit 1, fatal under the callers' pipefail.
   { grep -hE 'tui (prompt accepted|turn finished):' "${logs[@]}" || true; } | sort | awk -v cutoff="$cutoff" '
