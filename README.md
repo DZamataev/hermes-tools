@@ -31,7 +31,10 @@ codex-lb, keys, plugins, Kanban): [GUIDE.md](GUIDE.md).
   project's runbook and detaches the session) and `dz-agent-memory` (git mirror
   of agent memory and skills: setup, status, review) and `dz-kanban` (entry
   point to the Kanban method: setup/update, subscribe/unsubscribe a session,
-  board status, orchestrator review). Install by copy:
+  board status, orchestrator review) and `dz-hermes-rollout` (roll a Hermes
+  fork out to the local install: merge worktrees/upstream, verify on a test
+  instance, deploy; refuses while a window it closes has a turn running;
+  configured in `~/.config/dz-hermes-rollout/config.sh`). Install by copy:
   `bash skills/install.sh`.
 - `scripts/check.mjs` — runs every suite in this repository, concurrently.
 - `docs/` — design specifications and implementation plans.
