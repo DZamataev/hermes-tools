@@ -101,6 +101,36 @@ check "live_turns: open turns in home and profiles, not finished or stale ones" 
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$SB/nohome")
 check "live_turns: a home without logs has none"       '[ -z "$turns" ]'
 
+# ── state.sh: modes, install kind, harness ──
+st() { ROLLOUT_HARNESS_PID=1 "$S/state.sh" | grep "^$1=" | cut -d= -f2-; }
+out=$(ROLLOUT_CONFIG="$SB/none.sh" ROLLOUT_FORK= ROLLOUT_LIVE_HOME="$SB/empty" st mode)
+check "state: nothing installed is initial-setup"      '[ "$out" = initial-setup ]'
+out=$(ROLLOUT_CONFIG="$SB/none.sh" ROLLOUT_FORK= st mode)
+check "state: an install without a fork checkout is install-only" '[ "$out" = install-only ]'
+check "state: rollout when both are present"           '[ "$(st mode)" = rollout ]'
+git -C "$LIVE/hermes-agent" remote set-url origin https://github.com/NousResearch/hermes-agent.git
+git -C "$LIVE/hermes-agent" config branch.develop.remote origin
+check "state: an install from NousResearch is vanilla" '[ "$(st install_kind)" = vanilla ]'
+git -C "$LIVE/hermes-agent" remote add fork git@github.com:DZamataev/hermes-agent.git
+git -C "$LIVE/hermes-agent" config branch.develop.remote fork
+git -C "$LIVE/hermes-agent" config branch.develop.merge refs/heads/develop
+git -C "$LIVE/hermes-agent" update-ref refs/remotes/fork/develop HEAD
+check "state: kind follows the tracked remote (DZamataev fork)" '[ "$(st install_kind)" = dz-fork ]'
+git -C "$LIVE/hermes-agent" config branch.develop.remote origin
+git -C "$LIVE/hermes-agent" remote set-url origin https://github.com/someone/hermes-agent.git
+check "state: any other origin is other-fork"          '[ "$(st install_kind)" = other-fork ]'
+noagent() { env -u CLAUDECODE -u HERMES_SESSION_ID $(env | grep -o '^CODEX_[A-Za-z_]*' | sed 's/^/-u /') "$@"; }
+check "state: harness from CLAUDECODE"                 '[ "$(noagent CLAUDECODE=1 bash -c "$(declare -f st); S=$S st harness")" = claude-code ]'
+check "state: harness from a CODEX_ variable"          '[ "$(noagent CODEX_SANDBOX=seatbelt bash -c "$(declare -f st); S=$S st harness")" = codex ]'
+check "state: harness from HERMES_SESSION_ID"          '[ "$(noagent HERMES_SESSION_ID=x bash -c "$(declare -f st); S=$S st harness")" = hermes ]'
+check "state: no marker is unknown"                    '[ "$(noagent bash -c "$(declare -f st); S=$S st harness")" = unknown ]'
+
+# ── install.sh targets ──
+out=$(HOME="$SB/h" bash "$HERE/../../install.sh" --target claude dz-hermes-rollout 2>&1)
+check "install.sh --target claude copies into ~/.claude/skills" '[ -f "$SB/h/.claude/skills/dz-hermes-rollout/SKILL.md" ]'
+out=$(HOME="$SB/h" CODEX_HOME= bash "$HERE/../../install.sh" --target codex dz-hermes-rollout 2>&1)
+check "install.sh --target codex copies into ~/.codex/skills"   '[ -x "$SB/h/.codex/skills/dz-hermes-rollout/scripts/state.sh" ]'
+
 echo
 [ $FAILS -eq 0 ] && echo "all passed" || echo "$FAILS failed"
 exit $FAILS

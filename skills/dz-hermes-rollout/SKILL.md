@@ -1,7 +1,7 @@
 ---
 name: dz-hermes-rollout
-description: "Use when rolling out a Hermes Agent fork to the local install: first-time setup, merging feature worktrees or upstream into the fork, verifying it on a test instance, deploying or pushing it, or porting an open upstream PR as a hotfix."
-version: 1.0.0
+description: "Use when installing Hermes from scratch or rolling out a Hermes Agent fork to the local install: first-time setup, merging feature worktrees or upstream into the fork, verifying it on a test instance, deploying or pushing it, or porting an open upstream PR as a hotfix."
+version: 1.1.0
 author: Denis Zamataev
 license: MIT
 platforms: [macos]
@@ -32,16 +32,28 @@ Scripts: `${HERMES_SKILL_DIR}/scripts/` (Hermes substitutes the installed locati
 sit next to this file). Each ends with one result line, `MERGE|VERIFY|DEPLOY OK: …` or
 `… FAILED: …`, and fires a macOS notification. `--help` on any script lists its flags.
 
-`dz-hermes-rollout help`: explain to the operator, in their language, the three steps and their
-gates, what first-run setup asks, and the scripts' flags (`--help` on each); run nothing else.
+`dz-hermes-rollout help`: explain to the operator, in their language, the modes `state.sh` finds,
+the three steps and their gates, what setup asks, and the scripts' flags (`--help` on each); run
+nothing else.
 
-## Setup (first run)
+## Start: where am I
 
-The scripts read `~/.config/dz-hermes-rollout/config.sh`. When it is missing, or the operator asks
-to set up Hermes, follow [references/setup.md](references/setup.md) before any rollout step: it
-asks, one question at a time, for the rollout paths, whether to install the hermes-tools plugins,
-which TeamClaude and codex-lb backends to connect and how many, and whether to give ChatGPT models
-their own compression threshold (an important step against premature compression on defaults).
+Run `state.sh` before anything else. It reports the **harness** running this skill (Hermes Desktop
+or CLI, Claude Code, Codex), the live install and which code it runs, the fork checkout, and a
+`mode`:
+
+- `rollout`: go to the Procedure below.
+- `initial-setup`, `install-only`, `dev-only`: follow [references/setup.md](references/setup.md).
+  With nothing installed this is initial setup: it asks the operator to confirm one of three ways
+  (install the DZamataev fork; install vanilla Hermes plus the plugins and skills, with what will
+  not work; or their own fork, best forked from DZamataev, prepared for rollout), then offers the
+  plugins, TeamClaude and codex-lb backends, and a compression threshold for ChatGPT models. When
+  everything succeeded on a fork, it ends by offering `dz-kanban setup` for Kanban development.
+
+The harness sets how deploy runs: inside Hermes Desktop (`hermes_desktop=yes`) always
+`deploy.sh --detach`, since the app closes with the session in it; from any other harness, attached.
+Initial setup needs a harness other than Hermes, since there is no Hermes yet: the skill installs
+into Claude Code or Codex with `skills/install.sh --target claude|codex`.
 
 ## Procedure
 
@@ -84,9 +96,8 @@ with clean upstream; only new ones are ours. Commit the test to the worktree bra
 ## Rules
 
 - **Push only on the operator's explicit word**, and only the integration branch to its remote.
-- **From inside a Hermes Desktop session, always `deploy.sh --detach`**, and tell the operator the
-  app will close and reopen: deploy quits every Hermes window and the session that ran it dies.
-  From a plain terminal, run it attached.
+- **When `state.sh` says `hermes_desktop=yes`, always `deploy.sh --detach`**, and tell the operator
+  the app will close and reopen: deploy quits every Hermes window and the session that ran it dies.
 - **Live turns block deploy.** Deploy closes every Hermes window, the test instance included, and
   an app quit kills its running turns (the gateway restart drains its own). `deploy.sh` lists the
   running turns and refuses; `--dry-run` shows them too. The operator has usually just been using
