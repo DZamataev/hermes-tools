@@ -100,6 +100,10 @@ turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$H" | cut 
 check "live_turns: open turns in home and profiles, not finished or stale ones" '[ "$turns" = "S_LIVE S_PROFILE " ]'
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$SB/nohome")
 check "live_turns: a home without logs has none"       '[ -z "$turns" ]'
+# A fresh install's agent.log has no tui lines yet: none, and success — deploy.sh runs under set -e.
+Q="$SB/quiet"; mkdir -p "$Q/logs"; echo "$now,100 INFO gateway.run: started" > "$Q/logs/agent.log"
+turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$Q"); rc=$?
+check "live_turns: a log without tui lines has none, exit 0" '[ -z "$turns" ] && [ $rc -eq 0 ]'
 
 # ── state.sh: modes, install kind, harness ──
 st() { ROLLOUT_HARNESS_PID=1 "$S/state.sh" | grep "^$1=" | cut -d= -f2-; }

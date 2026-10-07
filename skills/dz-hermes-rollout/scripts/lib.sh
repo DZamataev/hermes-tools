@@ -120,7 +120,8 @@ live_turns() {  # $1 = Hermes home, $2 = window in hours
   cutoff=$(date -v-"${2:-12}"H '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "-${2:-12} hours" '+%Y-%m-%d %H:%M:%S')
   for f in "$1/logs/agent.log" "$1"/profiles/*/logs/agent.log; do [ -f "$f" ] && logs+=("$f"); done
   [ ${#logs[@]} -gt 0 ] || return 0
-  grep -hE 'tui (prompt accepted|turn finished):' "${logs[@]}" | sort | awk -v cutoff="$cutoff" '
+  # `|| true`: no tui lines yet (a fresh install) is grep exit 1, fatal under the callers' pipefail.
+  { grep -hE 'tui (prompt accepted|turn finished):' "${logs[@]}" || true; } | sort | awk -v cutoff="$cutoff" '
     { ts = $1 " " substr($2, 1, 8)
       if (!match($0, /agent_session_id=[^ ]+/)) next
       id = substr($0, RSTART + 17, RLENGTH - 17)

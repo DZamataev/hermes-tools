@@ -88,7 +88,20 @@ integration branch from it into the live install.
    branch (true right after option 3). An install of another origin is moved over with the
    operator's word: `git -C ~/.hermes/hermes-agent remote add fork <fork URL>`, fetch, check out the
    integration branch tracking `fork/<branch>`.
-6. Copy `templates/config.sh` to `~/.config/dz-hermes-rollout/config.sh` and fill it in: checkout,
+   An install that is not an ancestor (an old or archived branch), or a legacy one (no
+   `<install>/.hermes/bin/hermes`, runs `<install>/venv`): back up `config.yaml`, `.env`,
+   `state.db` and the install's HEAD as a branch, quit the app, then rerun the installer of option
+   3 over it with `--branch <integration branch>`. It switches the branch and migrates the
+   runtime. Afterwards set the install's upstream (`git config --add remote.origin.fetch
+   +refs/heads/<branch>:refs/remotes/origin/<branch>` when the clone is single-branch).
+6. The gateway must be a service: `hermes gateway status` showing "Running manually" means
+   `gateway restart` in deploy runs it in the foreground and never returns. Stop that process and
+   run `hermes gateway install`.
+7. `ROLLOUT_APP` is the bundle the Dock actually launches. When `/Applications/Hermes.app` is
+   something else (e.g. the old `Hermes-Setup` installer stub, `CFBundleExecutable` in its
+   `Info.plist`), point it at `<install>/apps/desktop/release/mac-*/Hermes.app` or copy the build
+   to `/Applications` first.
+8. Copy `templates/config.sh` to `~/.config/dz-hermes-rollout/config.sh` and fill it in: checkout,
    integration branch, worktree folder, upstream ref, push remote (`origin`). Confirm with
    `state.sh` (`mode=rollout`) and `merge.sh --dry-run`.
 
