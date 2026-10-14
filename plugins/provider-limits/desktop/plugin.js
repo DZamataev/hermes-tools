@@ -121,7 +121,7 @@ function relativeReset(resetAt) {
   }
 
   const ms = resetAt - Date.now()
-  if (ms <= 0) return 'resetting'
+  if (ms <= 0) return 'overdue'
   const minutes = Math.round(ms / 60_000)
   // Anything under a minute is "<1m", not the "in 0m" a round() produces.
   if (minutes < 1) return 'in <1m'
@@ -129,6 +129,16 @@ function relativeReset(resetAt) {
   const hours = Math.round(minutes / 60)
   if (hours < 48) return `in ${hours}h`
   return `in ${Math.round(hours / 24)}d`
+}
+
+/** The line under a bucket. A past reset means the upstream is still serving
+ *  its last sample (codex-lb does this for weeks when its usage poller stalls),
+ *  so the row says the data is stale rather than promising a reset. */
+function resetCaption(resetAt) {
+  const reset = relativeReset(resetAt)
+  if (!reset) return ''
+  const at = resetAt24(resetAt)
+  return reset === 'overdue' ? `reset overdue · ${at}` : `resets ${reset} · ${at}`
 }
 
 /** Defensive array read: the payload crosses a process boundary, and one
@@ -170,7 +180,7 @@ function BucketRow({ bucket }) {
     return null
   }
 
-  const reset = relativeReset(bucket.resetAt)
+  const reset = resetCaption(bucket.resetAt)
   const label = String(bucket.label ?? 'limit')
   return jsxs('div', {
     children: [
@@ -186,7 +196,7 @@ function BucketRow({ bucket }) {
       }),
       reset && jsx('div', {
         className: 'pl-reset',
-        children: bucket.resetAt ? `resets ${reset} · ${resetAt24(bucket.resetAt)}` : `resets ${reset}`
+        children: reset
       })
     ]
   })
@@ -525,7 +535,7 @@ function Chip() {
 // Exported for tests; the app only consumes the default export.
 export {
   ChipExplainer, chipBucket, chipEntries, clock24, downServices, list, pct,
-  relativeReset, resetAt24, ServiceRow, ServicesBanner,
+  relativeReset, resetAt24, resetCaption, ServiceRow, ServicesBanner,
   tone
 }
 

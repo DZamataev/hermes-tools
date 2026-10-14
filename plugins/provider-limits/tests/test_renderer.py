@@ -69,7 +69,7 @@ globalThis.document = {
 const plugin = (await import('./plugin.js')).default
 const {
   ChipExplainer, chipEntries, clock24, downServices, list, pct,
-  relativeReset, resetAt24, ServiceRow, ServicesBanner, chipBucket, tone
+  relativeReset, resetAt24, resetCaption, ServiceRow, ServicesBanner, chipBucket, tone
 } = await import('./plugin.js')
 
 const registered = []
@@ -288,6 +288,14 @@ check('reset-other-day-carries-date', resetAt24(later.getTime()).includes(' '))
 check('reset-rejects-nontimestamps',
   [true, NaN, Infinity, 'nope', null, 0, -1].every(v => relativeReset(v) === ''))
 check('reset-sub-minute', relativeReset(Date.now() + 1000) === 'in <1m')
+// codex-lb keeps serving its last usage sample when its poller stalls, so a
+// reset_at weeks in the past is a real payload; it used to read "resets resetting".
+const overdue = Date.UTC(2026, 8, 25, 17, 40, 48)
+check('reset-caption-future', resetCaption(Date.now() + 3 * 3600_000).startsWith('resets in 3h · '),
+  resetCaption(Date.now() + 3 * 3600_000))
+check('reset-caption-overdue', resetCaption(overdue) === `reset overdue · ${resetAt24(overdue)}`,
+  resetCaption(overdue))
+check('reset-caption-none', [undefined, null, 0, NaN].every(v => resetCaption(v) === ''))
 check('reset-hostile-resetAt24', [true, NaN, Infinity, 'nope'].every(v => resetAt24(v) === ''))
 
 // --- malformed payloads ---------------------------------------------------
