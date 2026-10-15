@@ -48,6 +48,7 @@ the repository does not change a running agent until you reinstall.
 | [`dz-clean-worktrees`](#dz-clean-worktrees) | find and remove git worktrees whose work is merged | "which worktrees can I delete in ~/dev" | `python3`, `git` |
 | [`dz-agent-memory`](#dz-agent-memory) | mirror agent memory and skills into a git repository | `dz-agent-memory setup` | `git`, `rsync`, `gitleaks` |
 | [`dz-hermes-rollout`](#dz-hermes-rollout) | install Hermes from scratch, or roll your fork out to the local install | "set up Hermes", "roll out my Hermes" | macOS |
+| [`dz-hermes-feature-dev`](#dz-hermes-feature-dev) | build or polish one feature of your Hermes fork in its own worktree, and see what upstream shipped since your last sync | `dz-hermes-feature-dev` | a fork set up by `dz-hermes-rollout`, `git` |
 
 Every `dz-*` skill answers `<name> help` with an explanation in your language and runs nothing.
 `skills/install.sh` installs into `${HERMES_HOME:-~/.hermes}/skills/software-development/`
@@ -178,6 +179,20 @@ branch. Every change reaches the live app through three gated steps:
 Paths live in `~/.config/dz-hermes-rollout/config.sh`. Inside Hermes Desktop deploy runs detached,
 since the app closes with the session in it. The skill also covers porting an open upstream PR as a
 hotfix with a test pinned to your failure.
+
+### dz-hermes-feature-dev
+
+Source: [`skills/dz-hermes-feature-dev/`](skills/dz-hermes-feature-dev/SKILL.md).
+
+The approach for one fork feature, run before building a new one or polishing an old one. Each
+feature keeps its own branch and worktree (`~/dev/hermes-wt/<name>` by default), syncs with upstream
+on its own and stays fit for an upstream PR. The session orchestrates: subagents implement, review
+and fix from written briefs; the session rules on findings and verifies with tests, hand mutations
+and a live gateway run; `dz-hermes-rollout` ships it, and the operator runs the deploy.
+
+`scripts/upstream-status.sh` answers "what is new upstream": the upstream commit the fork is synced
+to (the merge-base, so nothing has to record it), what landed upstream since, by area and as a log,
+and each feature worktree's own sync point. Read-only apart from `git fetch upstream`.
 
 ## Desktop plugins
 
