@@ -90,8 +90,7 @@ feature.
 
 ## 5. Ship
 
-`dz-hermes-rollout` (or the operator's own rollout skill, e.g. `hermes-local-rollout`): merge into
-the integration branch, verify, the operator checks the test
+`dz-hermes-rollout`: merge into the integration branch, verify, the operator checks the test
 instance, then deploy. **Deploy is the operator's:** give them the exact `deploy.sh` command to run
 from a terminal after they close Hermes themselves (deploy quits the app, which would kill this
 session and other chats' background subagents). Push only on their word. Afterwards check the

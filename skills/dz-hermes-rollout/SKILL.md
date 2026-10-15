@@ -62,7 +62,9 @@ into Claude Code or Codex with `skills/install.sh --target claude|codex`.
    operator the branch list with each branch's commits. Every branch ahead of the integration
    branch is merged, a half-finished one included: when one is not meant to ship, stop and ask.
    Then `merge.sh`. A conflict aborts that merge and stops; resolve it by hand in the fork, then
-   rerun (see Conflicts).
+   rerun (see Conflicts). When either side touched `tui_gateway/contracts/*`, run
+   `scripts/run-in-hermes-env python -P scripts/gen_gateway_contracts.py` in the fork after the
+   merge: `git status` must stay clean (the generated TS/OpenRPC match the merged models).
 2. **Verify.** `verify.sh`. The changed tests run; failures are re-run alone, then on the upstream
    commit the branch last merged, and only failures upstream lacks are ours: fix those in the
    owning worktree, merge again, verify again. Desktop tests are not part of it: when merged
@@ -70,19 +72,24 @@ into Claude Code or Codex with `skills/install.sh --target claude|codex`.
    headless with vitest. The step then starts the **test instance**, a second Hermes window on the
    fork's build and backend with an isolated home. Run the one-shot check the script prints, then
    hand the operator a checklist: a normal chat plus each shipped feature, concretely. Wait for
-   their confirmation.
+   their confirmation. A branch updated after verify (polish asked for in the test window):
+   `merge.sh && verify.sh --stop; verify.sh` rebuilds the test instance on the new commit.
 3. **Deploy, only after the operator confirms.** `deploy.sh` (`--push` only on the operator's
    explicit word). It refuses a sha `verify.sh` did not pass (`--unverified` only on their word)
    and refuses while a window it would close has a turn or a background subagent running (see
    Rules). Inside Hermes run `deploy.sh --dry-run [--push]`, then hand the operator the absolute
-   command it prints. Afterwards report the final shas of the branch and the install.
+   command it prints. When the operator says it is done, check: the install's `git log -1` and,
+   after `--push`, the pushed remote branch at the new sha; the app bundle's
+   `Contents/Resources/app.asar` freshly written; `hermes gateway status` running. Report the
+   final shas of the branch and the install.
 
 ## Conflicts
 
 Resolve so both sides survive: the fork's features and upstream's change. When upstream moved
 code the fork had edited (strings into a catalog, a function into a new module), carry the fork's
 edit into the new place, in every copy (every locale), rather than picking a side. Watch for a
-duplicate that a clean auto-merge leaves behind (the same element rendered twice). Commit the
+duplicate that a clean auto-merge leaves behind (the same element rendered twice). Branches that
+each append a block to the same function conflict textually but need both blocks. Commit the
 merge with the resolutions listed in the message.
 
 ## Hotfix from an open upstream PR
@@ -147,5 +154,9 @@ a Desktop on another machine started here over SSH (`hermes serve … --ssh-sess
   refuses lazy installs from a process that is not the install's own. Install the extra into the
   fork's environment (`. ./activate -- && hermes pm install --extra <name>`), then
   `verify.sh --stop && verify.sh`.
+- **After a deploy without `--push`** the install is ahead of the remote branch it tracks until the
+  operator pushes; that is expected, not drift.
+- **`scripts/run_tests.sh $FILES` under zsh gets one argument** (zsh does not word-split); pass an
+  array or use `xargs`.
 - The test instance's home has the live config and `.env` without messaging platforms, cron and
   the API server, and no `auth.json`: OAuth-only providers need a sign-in there.
