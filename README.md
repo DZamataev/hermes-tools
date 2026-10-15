@@ -174,10 +174,10 @@ branch. Every change reaches the live app through three gated steps:
    check it by hand.
 3. `deploy.sh [--push]` fast-forwards the install, rebuilds the desktop app, runs your post-deploy
    hook, restarts the gateway and reopens the app. It refuses an unverified commit, and refuses
-   while a Hermes window it would close has a turn running.
+   while a Hermes window it would close has a turn or a background subagent running.
 
-Paths live in `~/.config/dz-hermes-rollout/config.sh`. Inside Hermes Desktop deploy runs detached,
-since the app closes with the session in it. The skill also covers porting an open upstream PR as a
+Paths live in `~/.config/dz-hermes-rollout/config.sh`. Deploy closes the app, so inside Hermes the
+agent only dry-runs it and gives you the command to run from a terminal after quitting Hermes. The skill also covers porting an open upstream PR as a
 hotfix with a test pinned to your failure.
 
 ### dz-hermes-feature-dev

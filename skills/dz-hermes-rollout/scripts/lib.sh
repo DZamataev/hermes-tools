@@ -58,21 +58,11 @@ require_config() {
   mkdir -p "$STATE_DIR"
 }
 
-# Re-exec in the background with the output in a log (needed from inside a Hermes Desktop session
-# for anything that quits the app). Call as: maybe_detach "$@"
-maybe_detach() {
-  local a args=() detach=false
-  for a in "$@"; do if [ "$a" = --detach ]; then detach=true; else args+=("$a"); fi; done
-  $detach || return 0
-  mkdir -p "$STATE_DIR"
-  local log=$STATE_DIR/$SCRIPT_NAME-$(date +%Y%m%d-%H%M%S).log
-  nohup "$0" ${args[@]+"${args[@]}"} >"$log" 2>&1 </dev/null &
-  echo "$SCRIPT_NAME: started in background (pid $!)"
-  echo "$SCRIPT_NAME: log $log"
-  echo "$SCRIPT_NAME: result line: grep -E '^$TAG (OK|FAILED)' $log"
-  trap - EXIT
-  exit 0
-}
+# Deploy quits Hermes Desktop, which kills an agent running in it (its turn and every background
+# subagent) and the shells of its embedded terminal. Both carry a marker in their environment:
+# HERMES_SESSION_ID (agent tools) or HERMES_DESKTOP_TERMINAL (the terminal pane, inherited by any
+# agent harness started there).
+inside_hermes() { [ -n "${HERMES_SESSION_ID:-}" ] || [ "${HERMES_DESKTOP_TERMINAL:-}" = 1 ]; }
 
 # Run a command inside the fork's activated environment (deps + pytest).
 fork_env() { (cd "$FORK" && bash -c '. ./activate -- >/dev/null 2>&1 || exit 97; "$@"' _ "$@"); }
@@ -97,20 +87,36 @@ release_app() {  # $1 = checkout
   return 0
 }
 
-app_running() { pgrep -f "$1/Contents/MacOS/Hermes\$" >/dev/null; }
+# Main Electron processes by executable path (`comm`), not `pgrep -f`: macOS sometimes withholds a
+# process's argv, and then pgrep/pkill -f miss the live app outright.
+hermes_pids() {  # $1 = bundle path, or empty for every Hermes bundle
+  ps -axo pid=,comm= | awk -v want="${1:+$1/Contents/MacOS/Hermes}" '
+    { pid = $1; sub(/^ *[0-9]+ +/, ""); exe = $0
+      if (exe !~ /\/Contents\/MacOS\/Hermes$/) next
+      if (want == "" || exe == want) print pid }'
+}
+app_running() { [ -n "$(hermes_pids "$1")" ]; }
 # Quit by process path, not by bundle id: the test instance and the live app share the id.
 quit_app() {  # $1 = bundle path
   [ -n "$1" ] || return 0
   app_running "$1" || return 0
-  pkill -TERM -f "$1/Contents/MacOS/Hermes\$" || true
+  # shellcheck disable=SC2046  # one pid per word
+  kill -TERM $(hermes_pids "$1") 2>/dev/null || true
   # Electron drains its `hermes serve` child before exiting: 30+ s is normal with live sessions.
   for _ in $(seq 1 90); do app_running "$1" || return 0; sleep 1; done
   fail "$1 did not quit within 90 s"
 }
 
-test_instance_running() { pgrep -f -- "/Contents/MacOS/Hermes $MARK" >/dev/null; }
+# The test instance is told apart only by its extra argv, so this one needs `pgrep -f`.
+test_instance_pids() { pgrep -f -- "/Contents/MacOS/Hermes $MARK" || true; }
+test_instance_running() { [ -n "$(test_instance_pids)" ]; }
 # Any Hermes window other than the test instance (the Dock app, a release copy).
-live_app_running() { pgrep -fl "/Contents/MacOS/Hermes" | grep -v -- "$MARK" | grep -q 'Hermes$'; }
+live_app_running() {
+  local pid test
+  test=" $(test_instance_pids | tr '\n' ' ') "
+  for pid in $(hermes_pids ""); do [[ "$test" == *" $pid "* ]] || return 0; done
+  return 1
+}
 
 # Backends a Hermes Desktop on ANOTHER machine started here over SSH for the live home
 # (`hermes serve --isolated --ssh-session-token-file <home>/desktop-ssh/...`). Neither app quit
@@ -155,4 +161,28 @@ live_turns() {  # $1 = Hermes home, $2 = window in hours
       id = substr($0, RSTART + 17, RLENGTH - 17)
       if ($0 ~ /tui prompt accepted:/) open[id] = ts; else delete open[id] }
     END { for (id in open) if (open[id] >= cutoff) print id " since " open[id] }'
+}
+
+# Delegated subagents still working in a Hermes home. A background delegate_task child outlives its
+# parent's turn (the parent's "turn finished" is already logged), so live_turns misses it, yet an app
+# quit kills it. A child = a session whose "conversation turn" line says platform=subagent, whose row
+# in that home's state.db is not ended, and that logged something in the last $2 minutes (default
+# 15; an older one is a crash leftover). Prints "<session id> (subagent of <parent>) since <time>".
+live_subagents() {  # $1 = Hermes home, $2 = quiet window in minutes
+  local cutoff home f id parent last logs
+  cutoff=$(date -v-"${2:-15}"M '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "-${2:-15} minutes" '+%Y-%m-%d %H:%M:%S')
+  for home in "$1" "$1"/profiles/*; do
+    [ -f "$home/state.db" ] || continue
+    logs=()
+    for f in "$home/logs/agent.log" "$home/logs/gui.log"; do [ -f "$f" ] && logs+=("$f"); done
+    [ ${#logs[@]} -gt 0 ] || continue
+    for id in $({ grep -hE 'conversation turn: session=[^ ]+ .*platform=subagent' "${logs[@]}" || true; } \
+                  | sed -E 's/.*conversation turn: session=([^ ]+).*/\1/' | sort -u); do
+      parent=$(sqlite3 "$home/state.db" "SELECT parent_session_id FROM sessions WHERE id='$id' AND ended_at IS NULL" 2>/dev/null || true)
+      [ -n "$parent" ] || continue
+      last=$({ grep -hF "[$id]" "${logs[@]}" || true; } | sort | tail -1 | cut -c1-19)
+      if [ -n "$last" ] && [[ "$last" > "$cutoff" ]]; then echo "$id (subagent of $parent) since $last"; fi
+    done
+  done
+  return 0
 }

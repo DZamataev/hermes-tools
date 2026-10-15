@@ -4,7 +4,7 @@
 #
 #   harness          hermes | claude-code | codex | unknown
 #   harness_detail   the surface (desktop, tui, cli, ...) when known
-#   hermes_desktop   yes when a Hermes Desktop app is an ancestor (deploy needs --detach)
+#   hermes_desktop   yes when a Hermes Desktop app is an ancestor (deploy closes it: the operator runs it)
 #   install_*        the live install: present, dir, origin (of the tracked remote), branch,
 #                    kind (dz-fork|vanilla|other-fork|none)
 #   dev_*            the fork checkout rollout merges in (from the rollout config)

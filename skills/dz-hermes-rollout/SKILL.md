@@ -1,7 +1,7 @@
 ---
 name: dz-hermes-rollout
 description: "Use when installing Hermes from scratch or rolling out a Hermes Agent fork to the local install: first-time setup, merging feature worktrees or upstream into the fork, verifying it on a test instance, deploying or pushing it, or porting an open upstream PR as a hotfix."
-version: 1.1.0
+version: 1.2.0
 author: Denis Zamataev
 license: MIT
 platforms: [macos]
@@ -50,8 +50,9 @@ or CLI, Claude Code, Codex), the live install and which code it runs, the fork c
   plugins, TeamClaude and codex-lb backends, and a compression threshold for ChatGPT models. When
   everything succeeded on a fork, it ends by offering `dz-kanban setup` for Kanban development.
 
-The harness sets how deploy runs: inside Hermes Desktop (`hermes_desktop=yes`) always
-`deploy.sh --detach`, since the app closes with the session in it; from any other harness, attached.
+The harness sets who runs deploy: inside Hermes (`harness=hermes`, or `hermes_desktop=yes` for an
+agent started in the app's terminal pane) the agent runs only `deploy.sh --dry-run` and gives the
+operator the command (see Rules); from any other harness the agent may run `deploy.sh` itself.
 Initial setup needs a harness other than Hermes, since there is no Hermes yet: the skill installs
 into Claude Code or Codex with `skills/install.sh --target claude|codex`.
 
@@ -72,8 +73,9 @@ into Claude Code or Codex with `skills/install.sh --target claude|codex`.
    their confirmation.
 3. **Deploy, only after the operator confirms.** `deploy.sh` (`--push` only on the operator's
    explicit word). It refuses a sha `verify.sh` did not pass (`--unverified` only on their word)
-   and refuses while a window it would close has a turn running (see Rules). Report the final shas
-   of the branch and the install.
+   and refuses while a window it would close has a turn or a background subagent running (see
+   Rules). Inside Hermes run `deploy.sh --dry-run [--push]`, then hand the operator the absolute
+   command it prints. Afterwards report the final shas of the branch and the install.
 
 ## Conflicts
 
@@ -96,13 +98,21 @@ with clean upstream; only new ones are ours. Commit the test to the worktree bra
 ## Rules
 
 - **Push only on the operator's explicit word**, and only the integration branch to its remote.
-- **When `state.sh` says `hermes_desktop=yes`, always `deploy.sh --detach`**, and tell the operator
-  the app will close and reopen: deploy quits every Hermes window and the session that ran it dies.
-- **Live turns block deploy.** Deploy closes every Hermes window, the test instance included, and
-  stops SSH-started backends; both kill their running turns (the gateway restart drains its own). `deploy.sh` lists the
-  running turns and refuses; `--dry-run` shows them too. The operator has usually just been using
-  the test instance, so ask them to let its turns end; pass `--ignore-live-turns` only on their
-  word.
+- **Inside Hermes the operator runs deploy, not the agent.** Deploy quits the app, which kills the
+  agent's own turn, background subagents of other chats and the app's terminal panes. `deploy.sh`
+  refuses when `HERMES_SESSION_ID` or `HERMES_DESKTOP_TERMINAL` is set (`--dry-run` still works)
+  and prints the absolute command. Give the operator that command: close Hermes (Cmd+Q) once its
+  chats and subagents are done, then run it in a terminal outside Hermes. Check the result
+  afterwards (install and branch shas, the app bundle rewritten, the gateway running).
+- **Live turns and background subagents block deploy.** Deploy closes every Hermes window, the test
+  instance included, and stops SSH-started backends; both kill their running turns and the
+  `delegate_task` children that outlive their parent's turn (the gateway restart drains its own).
+  `deploy.sh` lists both (`live_turns` + `live_subagents` in lib.sh) and refuses; `--dry-run` shows
+  them too. The operator has usually just been using the test instance, so ask them to let its
+  turns end; pass `--ignore-live-turns` only on their word.
+- **Find the app by executable path (`ps -o comm`), never `pgrep -f`:** macOS sometimes withholds a
+  process's argv, and `pgrep/pkill -f` then miss the live app (deploy would skip the live-turn
+  check and the quit). Only the test instance, told apart by its extra argv, is matched by argv.
 - Deploy preconditions are checked before any side effect: both checkouts on the integration
   branch and clean (`package-lock.json` churn is exempt), the install's commit an ancestor of the
   fork's branch.

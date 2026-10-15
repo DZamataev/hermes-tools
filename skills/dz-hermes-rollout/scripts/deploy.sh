@@ -7,11 +7,10 @@
 #   deploy.sh --dry-run     plan only
 #   deploy.sh               deploy (refuses unless verify.sh recorded the current branch sha)
 #   deploy.sh --push        also push the branch from the fork first — ONLY on the operator's word
-#   deploy.sh --detach      background + log (REQUIRED from inside a Hermes Desktop session: the app quits)
+#   (refuses inside Hermes, but --dry-run: it prints the command for the operator to run from a terminal)
 #   --no-relaunch           leave the app closed        --unverified   skip the verified-sha check
 #   --ignore-live-turns     deploy although a Hermes window it closes has a turn running
 . "$(dirname "$0")/lib.sh"
-maybe_detach "$@"
 
 dry_run=false push=false relaunch=true unverified=false ignore_live=false
 for arg in "$@"; do
@@ -21,12 +20,21 @@ for arg in "$@"; do
     --no-relaunch) relaunch=false ;;
     --unverified) unverified=true ;;
     --ignore-live-turns) ignore_live=true ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "deploy: unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
 
 step "preconditions"
+# An agent hands the operator the command instead; the operator closes Hermes once its chats and
+# subagents are done and runs it from a terminal.
+cmd="$(cd "$(dirname "$0")" && pwd)/deploy.sh"
+$push && cmd+=" --push"; $relaunch || cmd+=" --no-relaunch"; $unverified && cmd+=" --unverified"
+if inside_hermes && ! $dry_run; then
+  echo "Run from a terminal outside Hermes after closing Hermes (Cmd+Q):"
+  echo "  $cmd"
+  fail "deploy is run by the operator, not from inside Hermes (an agent session or its terminal pane)"
+fi
 require_config
 [ -e "$INSTALL/.git" ] || fail "ROLLOUT_INSTALL is not a git checkout: $INSTALL"
 [ -x "$HB" ] || fail "install launcher missing: $HB"
@@ -42,21 +50,23 @@ if ! $unverified; then
     if $dry_run; then echo "WARNING: $msg"; else fail "$msg"; fi
   fi
 fi
-# Deploy quits every Hermes window, and an app quit kills its running turns (the gateway restart
-# drains its own), and so does stopping an SSH backend. Check every home with a window or an SSH
+# Deploy quits every Hermes window, and an app quit kills its running turns and background
+# subagents (the gateway restart drains its own), and so does stopping an SSH backend. Check every home with a window or an SSH
 # backend open: the live one and the test instance's.
 live=""
 owners=""
 live_app_running && owners="live app"
 nssh=$(ssh_backends | wc -l | tr -d ' ')
 [ "$nssh" -gt 0 ] && owners="${owners:+$owners, }ssh backend"
+# Background delegate_task children outlive their parent's turn, so live_turns alone misses them.
+in_home() { { live_turns "$1"; live_subagents "$1"; } | sed "s/^/$2: /"; }
 # The live app and the SSH backends share the live home and its logs: check it once.
-[ -n "$owners" ] && live+=$(live_turns "$LIVE_HOME" | sed "s/^/$owners: /")$'\n'
-test_instance_running && live+=$(live_turns "$TEST_HOME/home" | sed 's/^/test instance: /')
+[ -n "$owners" ] && live+=$(in_home "$LIVE_HOME" "$owners")$'\n'
+test_instance_running && live+=$(in_home "$TEST_HOME/home" "test instance")
 live=$(echo "$live" | sed '/^$/d')
 if [ -n "$live" ]; then
   echo "running turns:"; echo "$live" | sed 's/^/  /'
-  msg="$(echo "$live" | wc -l | tr -d ' ') turn(s) still running in a Hermes window deploy would close"
+  msg="$(echo "$live" | wc -l | tr -d ' ') turn(s)/subagent(s) still running in a Hermes window deploy would close"
   if $dry_run || $ignore_live; then echo "WARNING: $msg"; else fail "$msg (wait for them, or --ignore-live-turns)"; fi
 fi
 git -C "$INSTALL" fetch -q "$FORK" "$BRANCH" || fail "fetch of $FORK/$BRANCH into $INSTALL failed"
@@ -67,6 +77,7 @@ echo "install $(git -C "$INSTALL" rev-parse --short "$old") → $(git -C "$FORK"
 if $dry_run; then
   $push && echo "would run: git -C $FORK push $PUSH_REMOTE $BRANCH"
   echo "would: quit Hermes, fast-forward $INSTALL, sync deps (launcher), rebuild desktop into $APP$([ -n "$POST_DEPLOY" ] && echo ", run the post-deploy hook")$([ "$RESTART_GATEWAY" = 1 ] && echo ", restart gateway")$([ "$nssh" -gt 0 ] && echo ", restart $nssh SSH backend(s)")$($relaunch && echo ", open $APP")"
+  inside_hermes && echo "the operator runs, from a terminal outside Hermes after closing it: $cmd"
   ok "dry run"
   exit 0
 fi

@@ -44,6 +44,8 @@ ROLLOUT_LIVE_HOME=$LIVE
 ROLLOUT_TEST_HOME=$SB/test-home
 EOF
 export ROLLOUT_CONFIG="$SB/cfg/config.sh" ROLLOUT_NO_NOTIFY=1 ROLLOUT_SKIP_SMOKE=1
+# The bench may run from a Hermes session: deploy.sh would refuse everything but --dry-run.
+unset HERMES_SESSION_ID HERMES_DESKTOP_TERMINAL
 
 # ── merge.sh ──
 out=$("$S/merge.sh" --dry-run 2>&1)
@@ -85,6 +87,13 @@ echo dirty >> "$SB/fork/base.txt"
 out=$("$S/deploy.sh" --dry-run 2>&1)
 check "deploy refuses a dirty fork"                    '[[ $out == *"has uncommitted changes"* ]]'
 git -C "$SB/fork" checkout -q -- base.txt
+out=$(HERMES_SESSION_ID=x "$S/deploy.sh" --push 2>&1)
+check "deploy refuses inside a Hermes agent session"   '[[ $out == *"DEPLOY FAILED: deploy is run by the operator"* ]]'
+check "the refusal prints the absolute command"        '[[ $out == *"  $S/deploy.sh --push"* || $out == *"  $(cd "$S" && pwd)/deploy.sh --push"* ]]'
+out=$(HERMES_DESKTOP_TERMINAL=1 "$S/deploy.sh" 2>&1)
+check "deploy refuses inside the Desktop terminal pane" '[[ $out == *"DEPLOY FAILED: deploy is run by the operator"* ]]'
+out=$(HERMES_SESSION_ID=x "$S/deploy.sh" --dry-run 2>&1)
+check "a dry run works inside Hermes and names the command" '[[ $out == *"DEPLOY OK: dry run"* && $out == *"the operator runs"* ]]'
 
 # ── live_turns ──
 H="$SB/turns"; mkdir -p "$H/logs" "$H/profiles/p1/logs"
@@ -107,11 +116,43 @@ Q="$SB/quiet"; mkdir -p "$Q/logs"; echo "$now,100 INFO gateway.run: started" > "
 turns=$(bash -c '. "$1"; trap - EXIT; live_turns "$2"' _ "$S/lib.sh" "$Q"); rc=$?
 check "live_turns: a log without tui lines has none, exit 0" '[ -z "$turns" ] && [ $rc -eq 0 ]'
 
+# ── live_subagents ──
+mkdir -p "$H/profiles/p1"
+recent=$(date -v-5M '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '-5 minutes' '+%Y-%m-%d %H:%M:%S')
+quiet=$(date -v-40M '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d '-40 minutes' '+%Y-%m-%d %H:%M:%S')
+cat >> "$H/logs/agent.log" <<EOF
+$recent,100 INFO [C_LIVE] agent.turn_context: conversation turn: session=C_LIVE model=m provider=p platform=subagent history=0 msg='x'
+$now,100 INFO [C_LIVE] run_agent: tool terminal done
+$now,100 INFO [C_ENDED] agent.turn_context: conversation turn: session=C_ENDED model=m provider=p platform=subagent history=0 msg='x'
+$quiet,100 INFO [C_QUIET] agent.turn_context: conversation turn: session=C_QUIET model=m provider=p platform=subagent history=0 msg='x'
+$now,100 INFO [P_TOP] agent.turn_context: conversation turn: session=P_TOP model=m provider=p platform=desktop history=0 msg='x'
+EOF
+echo "$now,100 INFO [C_PROF] agent.turn_context: conversation turn: session=C_PROF model=m provider=p platform=subagent history=0 msg='x'" >> "$H/profiles/p1/logs/agent.log"
+mkdb() { sqlite3 "$1" "CREATE TABLE sessions (id TEXT PRIMARY KEY, parent_session_id TEXT, ended_at REAL); $2"; }
+mkdb "$H/state.db" "INSERT INTO sessions VALUES ('C_LIVE','P_TOP',NULL),('C_ENDED','P_TOP',1.0),('C_QUIET','P_TOP',NULL),('P_TOP',NULL,NULL);"
+mkdb "$H/profiles/p1/state.db" "INSERT INTO sessions VALUES ('C_PROF','P_OTHER',NULL);"
+subs=$(bash -c '. "$1"; trap - EXIT; live_subagents "$2"' _ "$S/lib.sh" "$H" | sort)
+check "live_subagents: running children of the home and its profiles, not ended or quiet ones" \
+  '[ "$(echo "$subs" | cut -d" " -f1-4 | tr "\n" "|")" = "C_LIVE (subagent of P_TOP)|C_PROF (subagent of P_OTHER)|" ]'
+subs=$(bash -c '. "$1"; trap - EXIT; live_subagents "$2"' _ "$S/lib.sh" "$Q"); rc=$?
+check "live_subagents: a home without state.db has none, exit 0" '[ -z "$subs" ] && [ $rc -eq 0 ]'
+
+# ── Hermes processes by executable path ──
+# A stand-in executable at <bundle>/Contents/MacOS/Hermes; its argv is not consulted.
+mkdir -p "$SB/Fake.app/Contents/MacOS"; ln -s /bin/sleep "$SB/Fake.app/Contents/MacOS/Hermes"   # a copy of a system binary gets SIGKILLed
+"$SB/Fake.app/Contents/MacOS/Hermes" 120 & fake=$!; sleep 0.5
+lib() { bash -c '. "$1"; trap - EXIT; shift; "$@"' _ "$S/lib.sh" "$@"; }
+check "hermes_pids: finds a bundle's process by executable path" '[ "$(lib hermes_pids "$SB/Fake.app")" = "$fake" ]'
+check "hermes_pids: no match for another bundle"       '[ -z "$(lib hermes_pids "$SB/Other.app")" ]'
+check "hermes_pids \"\": every Hermes bundle includes it" 'lib hermes_pids "" | grep -qx "$fake"'
+lib quit_app "$SB/Fake.app" >/dev/null
+check "quit_app: stops the bundle's process"           '! kill -0 '"$fake"' 2>/dev/null'
+kill "$fake" 2>/dev/null; wait "$fake" 2>/dev/null
+
 # ── backends that a Desktop on another machine started over SSH ──
 # A stand-in process with the argv of such a backend; one of another home must be left alone.
 fake_backend() { python3 -c 'import time; time.sleep(120)' serve --isolated --ssh-session-token-file "$1/desktop-ssh/own/nonce.token" >/dev/null 2>&1 </dev/null & echo $!; }
 mine=$(fake_backend "$LIVE"); other=$(fake_backend "$SB/other-home"); sleep 0.5
-lib() { bash -c '. "$1"; trap - EXIT; shift; "$@"' _ "$S/lib.sh" "$@"; }
 found=$(ROLLOUT_CONFIG="$SB/cfg/config.sh" lib ssh_backends | tr '\n' ' ')
 check "ssh_backends: lists the live home's SSH backend only" '[ "$found" = "$mine " ]'
 echo "$now,600 INFO tui_gateway.server: tui prompt accepted: ui_session=f agent_session_id=S_REMOTE kind=user" > "$LIVE/logs/gui.log"
@@ -119,7 +160,7 @@ out=$("$S/deploy.sh" --dry-run 2>&1)
 check "deploy dry run: a turn on an SSH backend is reported" '[[ $out == *"ssh backend: S_REMOTE"* ]]'
 check "deploy dry run: plans the SSH backend restart" '[[ $out == *"restart 1 SSH backend(s)"* ]]'
 out=$("$S/deploy.sh" 2>&1)
-check "deploy refuses while an SSH backend has a turn running" '[[ $out == *"DEPLOY FAILED"*"turn(s) still running"* ]] && kill -0 '"$mine"
+check "deploy refuses while an SSH backend has a turn running" '[[ $out == *"DEPLOY FAILED"*"turn(s)/subagent(s) still running"* ]] && kill -0 '"$mine"
 rm "$LIVE/logs/gui.log"
 ROLLOUT_CONFIG="$SB/cfg/config.sh" lib stop_ssh_backends >/dev/null
 check "stop_ssh_backends: stops the live home's SSH backend" '! kill -0 '"$mine"' 2>/dev/null'
