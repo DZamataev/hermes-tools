@@ -65,16 +65,24 @@ def board_db(slug):
 
 
 def plan(cmds, yes, why=None):
-    """Print the commands; run them with --yes. cmds: list of (argv, home or None)."""
-    for argv, home in cmds:
-        print("  $ %s%s" % ("HERMES_HOME=%s " % home if home else "", " ".join(_q(x) for x in argv)))
+    """Print the commands; run them with --yes. cmds: list of (argv, home or None[, "if-set"]).
+
+    An "if-set" command is a `config unset` that may find the key absent: `config get` reports
+    inherited values, so only the unset itself knows whether the profile's file has the key."""
+    for c in cmds:
+        argv, home = c[0], c[1]
+        print("  $ %s%s%s" % ("HERMES_HOME=%s " % home if home else "", " ".join(_q(x) for x in argv),
+                              "   # if set" if c[2:] else ""))
     if why:
         print("  " + why)
     if not yes:
         print("dry run; re-run with --yes")
         return 0
-    for argv, home in cmds:
+    for c in cmds:
+        argv, home = c[0], c[1]
         r = run(argv, env=dict(os.environ, HERMES_HOME=home) if home else None)
+        if r.returncode and c[2:] and "not set" in (r.stderr + r.stdout):
+            continue
         if r.returncode:
             print("FAILED (%d): %s" % (r.returncode, (r.stderr or r.stdout).strip()[:400]))
             return 1
@@ -331,13 +339,9 @@ def cmd_profile_set(a):
                  ([HERMES, "config", "set", "model.default", model], home)]
         # A profile cloned from another keeps that provider's endpoint and key in its model section;
         # left behind, they route the new provider's model to the old host with the old key.
-        r = hermes("config", "get", "model", "--json", home=home)
-        try:
-            cur = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
-        except ValueError:
-            cur = {}
-        if isinstance(cur, dict) and cur.get("provider") != prov:
-            cmds += [([HERMES, "config", "unset", "model." + k], home) for k in STALE_MODEL_KEYS if cur.get(k)]
+        cur = profile_info(a.name)
+        if cur.get("provider") != prov:
+            cmds += [([HERMES, "config", "unset", "model." + k], home, "if-set") for k in STALE_MODEL_KEYS]
     if a.effort:
         if a.effort != "inherit" and a.effort not in EFFORTS:
             sys.exit("--effort: one of %s or inherit" % ", ".join(EFFORTS))
