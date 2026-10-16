@@ -37,6 +37,7 @@ HERMES = os.environ.get("DZ_HERMES") or "hermes"
 HOME = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
 OPEN = ("todo", "ready", "running", "blocked", "review", "scheduled", "triage")
 EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
+STALE_MODEL_KEYS = ("base_url", "key_env", "api_key", "api_mode")
 
 
 def run(cmd, env=None):
@@ -328,6 +329,15 @@ def cmd_profile_set(a):
         prov, model = _pm(a.model, "--model")
         cmds += [([HERMES, "config", "set", "model.provider", prov], home),
                  ([HERMES, "config", "set", "model.default", model], home)]
+        # A profile cloned from another keeps that provider's endpoint and key in its model section;
+        # left behind, they route the new provider's model to the old host with the old key.
+        r = hermes("config", "get", "model", "--json", home=home)
+        try:
+            cur = json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {}
+        except ValueError:
+            cur = {}
+        if isinstance(cur, dict) and cur.get("provider") != prov:
+            cmds += [([HERMES, "config", "unset", "model." + k], home) for k in STALE_MODEL_KEYS if cur.get(k)]
     if a.effort:
         if a.effort != "inherit" and a.effort not in EFFORTS:
             sys.exit("--effort: one of %s or inherit" % ", ".join(EFFORTS))

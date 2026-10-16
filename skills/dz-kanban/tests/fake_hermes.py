@@ -55,6 +55,15 @@ if args[:1] == ["config"]:
             node = node.setdefault(p, {})
         node[parts[-1]] = val
         json.dump(cfg, open(cfgp, "w"))   # JSON is valid YAML
+    elif args[1] == "unset":
+        node = cfg
+        parts = args[2].split(".")
+        for p in parts[:-1]:
+            node = node.get(p) if isinstance(node, dict) else None
+        if not isinstance(node, dict) or parts[-1] not in node:
+            sys.exit("Config key not set: " + args[2])
+        del node[parts[-1]]
+        json.dump(cfg, open(cfgp, "w"))
     elif args[1] == "get":
         node = cfg
         for p in args[2].split("."):

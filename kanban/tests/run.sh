@@ -139,6 +139,8 @@ if (. "$S/lib.sh"; kanban_render "$SANDBOX/bad.md") >/dev/null 2>&1; then bad "r
 check "profiles creates three roles" "[ \$(grep -c 'profile create' '$FAKE_LOG') = 3 ]"
 check "profiles rewrites cloned memory" "grep -q 'blind adversarial reviewer' '$HERMES_HOME/profiles/demoreview/memories/MEMORY.md' && ! grep -q INHERITED '$HERMES_HOME/profiles/demoreview/memories/MEMORY.md'"
 check "profiles pins the reviewer model" "grep -q 'config set model.default gpt-x' '$FAKE_LOG'"
+check "profiles clears the cloned endpoint and key when the provider changes" "grep -q 'config unset model.base_url' '$FAKE_LOG' && grep -q 'config unset model.key_env' '$FAKE_LOG'"
+check "profiles touches no endpoint of a role without a model pin" "[ \$(grep -c 'config unset model.base_url' '$FAKE_LOG') = 1 ]"
 check "profiles writes the fallback block" "grep -q -- '- provider: other' '$HERMES_HOME/profiles/demoreview/config.yaml'"
 check "profiles sets worker_fallback=wait on impl and fix" "grep -qx 'kanban.worker_fallback=wait' '$HERMES_HOME/profiles/demoimpl/config.set' 2>/dev/null && grep -qx 'kanban.worker_fallback=wait' '$HERMES_HOME/profiles/demofix/config.set' 2>/dev/null"
 check "profiles leaves the reviewer on allow" "! grep -q worker_fallback '$HERMES_HOME/profiles/demoreview/config.set' 2>/dev/null"

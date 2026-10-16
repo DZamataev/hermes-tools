@@ -198,7 +198,7 @@ check "export ran before delete" "[ \"\$(grep -n 'boards export other' '$FAKE_LO
 # ---- configure: profiles ------------------------------------------------------------------------
 for p in pimpl preview pfix spare; do mkdir -p "$HERMES_HOME/profiles/$p"; done
 printf '{"model": {"default": "opus", "provider": "teamclaude"}, "kanban": {"worker_fallback": "wait"}}' > "$HERMES_HOME/profiles/pimpl/config.yaml"
-printf '{"model": {"default": "claude-sonnet", "provider": "teamclaude"}}' > "$HERMES_HOME/profiles/preview/config.yaml"
+printf '{"model": {"default": "claude-sonnet", "provider": "teamclaude", "base_url": "https://tc.example", "key_env": "TC_KEY"}}' > "$HERMES_HOME/profiles/preview/config.yaml"
 printf '{"model": {"default": "opus", "provider": "teamclaude"}}' > "$HERMES_HOME/profiles/pfix/config.yaml"
 printf '{"providers": {"teamclaude": {"model": "opus", "transport": "anthropic_messages", "models": {"opus": {}}}, "codex-lb": {"model": "gpt-x"}}}' > "$HERMES_HOME/config.yaml"
 python3 "$KC" profiles --board demo > "$SB/pr.txt"
@@ -227,6 +227,11 @@ check "profile-set writes the effort (with --force)" "[ \"\$(cfg preview \"['age
 check "profile-set writes an ordered fallback list" "[ \"\$(cfg preview \"['fallback_providers']\")\" = \"[{'provider': 'teamclaude', 'model': 'opus'}, {'provider': 'codex-lb', 'model': 'gpt-y'}]\" ]"
 check "profile-set reports the result" "grep -q 'now: codex-lb:gpt-x effort=high' '$SB/ps.txt'"
 check "profile-set leaves other profiles alone" "[ \"\$(cfg pimpl \"['model']['default']\")\" = opus ]"
+check "profile-set drops the old provider's endpoint and key" "! grep -q -e base_url -e key_env '$HERMES_HOME/profiles/preview/config.yaml'"
+mkdir -p "$HERMES_HOME/profiles/psame"
+printf '{"model": {"default": "a", "provider": "teamclaude", "base_url": "https://tc.example"}}' > "$HERMES_HOME/profiles/psame/config.yaml"
+python3 "$KC" profile-set psame --model teamclaude:b --yes >/dev/null
+check "profile-set keeps the endpoint when the provider stays" "grep -q tc.example '$HERMES_HOME/profiles/psame/config.yaml'"
 python3 "$KC" profile-set preview --no-fallback --worker-fallback wait --yes > /dev/null
 check "--no-fallback empties the list; --worker-fallback sets kanban.worker_fallback" "[ \"\$(cfg preview \"['fallback_providers']\")\" = '[]' ] && [ \"\$(cfg preview \"['kanban']['worker_fallback']\")\" = wait ]"
 python3 "$KC" profile-set preview --effort inherit --yes > /dev/null

@@ -102,5 +102,7 @@ elif argv[:2] == ["config", "set"]:
         f.write(f"{argv[2]}={argv[3]}\n")
 elif argv[:2] == ["config", "get"]:
     print("fake-value")
+elif argv[:2] == ["config", "unset"]:
+    pass  # recorded in FAKE_LOG; the real one fails on a key that is not set
 else:
     sys.exit("fake hermes: unsupported " + shlex.join(argv))

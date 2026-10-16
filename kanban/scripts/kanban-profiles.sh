@@ -105,8 +105,16 @@ for role in impl review fix; do
   spec="$(lookup "$role" ${MODELS[@]+"${MODELS[@]}"})"
   if [ -n "$spec" ]; then
     case "$spec" in *:*) ;; *) kanban_die "--model-$role wants <provider>:<model>, got $spec" 2 ;; esac
+    old_prov="$(HERMES_HOME="$dir" hermes_cli config get model.provider 2>/dev/null | tail -1 || true)"
     HERMES_HOME="$dir" hermes_cli config set model.provider "${spec%%:*}" >/dev/null
     HERMES_HOME="$dir" hermes_cli config set model.default "${spec#*:}" >/dev/null
+    # The clone keeps the source provider's endpoint and key; left behind, they route the new model
+    # to the old host. unset fails on a key that is not set, hence || true.
+    if [ "$old_prov" != "${spec%%:*}" ]; then
+      for k in base_url key_env api_key api_mode; do
+        HERMES_HOME="$dir" hermes_cli config unset "model.$k" >/dev/null 2>&1 || true
+      done
+    fi
   fi
   # Authors wait out a quota wall on their own model instead of finishing on a weaker fallback; the
   # dispatcher requeues the card as rate_limited. The reviewer keeps the default (allow).
