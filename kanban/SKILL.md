@@ -123,9 +123,12 @@ git -C <repo> worktree add -b <effort>/chain <wt-root>/<effort> main
   one family for all roles, say so: the review becomes a second pass, not an
   independent one. Per-role fallback is a top-level `fallback_providers:` list
   in the profile's `config.yaml`.
-- Check routing: `HERMES_HOME=~/.hermes/profiles/<p> hermes config get model.default`
-  (configured) and `grep "OpenAI client created" ~/.hermes/profiles/<p>/logs/agent.log`
-  (actual, only after a real run). Per-card `set-model` overrides beat the profile.
+- Check routing before the first card, not after it: a one-shot
+  `HERMES_HOME=~/.hermes/profiles/<p> hermes -z "Reply with exactly one word: pong"`
+  per profile, then the served model from `<p>/state.db` (`sessions.model`,
+  `billing_provider`). A cloned model section can keep another host's
+  `base_url`/`key_env` and fail 401 on every card (dz-kanban "Configure").
+  Per-card `set-model` overrides beat the profile.
 - A config change binds at the next spawn. **Never kill a running worker to
   apply one.**
 - **Extra role profiles** (a modeller, a playtester) are the same kind of
