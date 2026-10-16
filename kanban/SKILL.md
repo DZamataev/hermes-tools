@@ -126,7 +126,8 @@ git -C <repo> worktree add -b <effort>/chain <wt-root>/<effort> main
 - Check routing before the first card, not after it: a one-shot
   `HERMES_HOME=~/.hermes/profiles/<p> hermes -z "Reply with exactly one word: pong"`
   per profile, then the served model from `<p>/state.db` (`sessions.model`,
-  `billing_provider`). A cloned model section can keep another host's
+  `billing_provider`, `billing_base_url` — a named custom provider reports
+  `custom`, only the URL names the host). A cloned model section can keep another host's
   `base_url`/`key_env` and fail 401 on every card (dz-kanban "Configure").
   Per-card `set-model` overrides beat the profile.
 - A config change binds at the next spawn. **Never kill a running worker to
@@ -137,7 +138,9 @@ git -C <repo> worktree add -b <effort>/chain <wt-root>/<effort> main
   through `kanban-card.sh` with the closest role's template, contract and
   retries, and `KANBAN_ASSIGNEE=<prefix><role>` hands the card to them: an
   asset card is `impl` (it commits), a device check that writes one report is
-  `research` (it does not).
+  `research` (it does not). Route by what can judge it: a device check a
+  script can assert is an ordinary `impl` card, a playtester takes only what
+  needs looking but no taste, and feel or taste is an operator gate.
 
 ## 5. Cards
 
