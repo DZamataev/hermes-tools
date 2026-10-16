@@ -29,6 +29,7 @@ arguments. Requires `bash`, `python3` and `git`; nothing else.
 | `kanban-card.sh <role> "<title>" <task-file\|-> <workdir> [parent…]` | one card: role template + task body, profile, retries, workspace, notify subscription (+ the calling desktop/TUI session); prints the id |
 | `kanban-chain.py` | implement → review → fix triple (optionally after a parent, optionally with an operator gate), created blocked, linked, session subscription checked, head released |
 | `kanban-sync.py [--root DIR]` / `--apply PROJECT` | finds every kanban project under a root (default `~/dev`) and reports which method rules its role templates lack; `--apply` inserts them (section 13) |
+| `kanban-effort.py --board B <card> <effort> [--profile P]` | pins a card's reasoning effort (and optionally reassigns it) while it is still blocked/todo; `create` has no flag for it |
 
 ## 1. When the board is worth it
 
@@ -127,6 +128,13 @@ git -C <repo> worktree add -b <effort>/chain <wt-root>/<effort> main
   (actual, only after a real run). Per-card `set-model` overrides beat the profile.
 - A config change binds at the next spawn. **Never kill a running worker to
   apply one.**
+- **Extra role profiles** (a modeller, a playtester) are the same kind of
+  profile with their own role-only `MEMORY.md`, created with `hermes profile
+  create <prefix><role> --clone-from default --no-alias`. Their cards still go
+  through `kanban-card.sh` with the closest role's template, contract and
+  retries, and `KANBAN_ASSIGNEE=<prefix><role>` hands the card to them: an
+  asset card is `impl` (it commits), a device check that writes one report is
+  `research` (it does not).
 
 ## 5. Cards
 
@@ -146,6 +154,13 @@ Run `kanban-chain.py` from the orchestrating session's `terminal`: it subscribes
 that session (`HERMES_SESSION_KEY`) to every card and refuses to run without the
 key, since a chain nobody subscribed to runs unheard. From a plain shell with
 nobody to notify, pass `--no-session`.
+
+Notifications reach only a session subscribed on the host that runs the board.
+A session driving another machine's board over ssh is never woken: do not tell
+the operator you will watch those cards. Put the orchestrator on that host
+(e.g. a Desktop ssh connection, whose `serve --isolated` backend exits 15 min
+after the client leaves unless `dashboard.ssh_isolated_idle_grace_s` is raised
+there), or say plainly that the cards run unwatched until he writes.
 
 What every body carries (the templates hold it; do not trim them):
 
@@ -207,6 +222,11 @@ Board mechanics the scripts already respect (know them when working by hand):
   Two failed attempts on one finding: stop and record.
 - Findings the fixer rejected are the operator's first suspects at acceptance:
   name them in the hand-off.
+- Orchestrator findings go in **before** the fix card is claimed, never as a
+  comment on a running one: with an empty review the fix card closes
+  no-change in seconds and never reads the comment. To add findings, block
+  the fix card while it is still `todo`, or chain a follow-up implement →
+  review → fix with its own task file after the fix.
 
 ## 7. While it runs
 

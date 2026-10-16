@@ -69,6 +69,11 @@ if "$S/kanban-card.sh" impl "x" task.md relative/path >/dev/null 2>&1; then bad 
 FAKE_NO_ID=1 "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1 && bad "card fails when create returns no id" || ok "card fails when create returns no id"
 GID="$("$S/kanban-card.sh" gate "G" task.md "$R")"
 check "gate is created blocked with no assignee" "grep \"create G \" '$FAKE_LOG' | grep -q -- '--initial-status blocked' && ! grep \"create G \" '$FAKE_LOG' | grep -q -- '--assignee'"
+mkdir -p "$HERMES_HOME/profiles/demo3dmodeller"
+KANBAN_ASSIGNEE=demo3dmodeller "$S/kanban-card.sh" impl "Model" task.md "$R" >/dev/null
+check "KANBAN_ASSIGNEE gives the card to the extra profile, keeping the role's contract" "grep 'create Model ' '$FAKE_LOG' | grep -q -- '--assignee demo3dmodeller' && grep 'create Model ' '$FAKE_LOG' | grep -qE -- '--completion-contract local-commit( |\$)'"
+if KANBAN_ASSIGNEE=nosuchprofile "$S/kanban-card.sh" impl "x" task.md "$R" >/dev/null 2>&1; then bad "card refuses an assignee profile that does not exist"; else ok "card refuses an assignee profile that does not exist"; fi
+if KANBAN_ASSIGNEE=demo3dmodeller "$S/kanban-card.sh" gate "x" task.md "$R" >/dev/null 2>&1; then bad "gate card refuses KANBAN_ASSIGNEE"; else ok "gate card refuses KANBAN_ASSIGNEE"; fi
 check "card outside a session subscribes no session" "! grep -q -- '--platform tui' '$FAKE_LOG'"
 
 # card: the calling desktop/TUI session is subscribed too
