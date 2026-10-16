@@ -139,10 +139,10 @@ get the operator's word, re-run with `--yes`.
 | Ask | Run |
 |---|---|
 | list boards | `KC boards` |
-| create a board | `KC board-create <slug> --name "<title>" [--workdir DIR]` |
+| create a board | `KC board-create <slug> --name "<title>" [--workdir DIR]` — slug is kebab-case only; a dictated `a_b_2` becomes `a-b-2`, say so. Then point `KANBAN_BOARD` in `.kanban/config.env` and the runbook's board line at it |
 | rename | `KC board-rename <slug> "<new name>"` — display name only; the slug is immutable, so `.kanban/config.env` keeps working |
 | default workspace | `KC board-workdir <slug> <dir>` |
-| archive | `KC board-archive <slug>` — to `kanban/boards/_archived/`, recoverable |
+| archive | `KC board-archive <slug>` — to `kanban/boards/_archived/`, recoverable. Finalizing a finished effort: `KB status` shows no open cards → archive |
 | delete | `KC board-delete <slug>` — exports to `~/.hermes/backups/kanban/<slug>-<time>.tar.gz`, then hard-deletes |
 | list a board's profiles | `KC profiles --board <slug>` (or `--prefix p`) — model, provider, effort, fallbacks, `worker_fallback` |
 | what providers exist | `KC providers` |
@@ -167,8 +167,37 @@ two, the rest are yours):
 - A change binds at the **next spawn**. A running card keeps the model it
   started with; never kill a worker to apply a change. A per-card
   `set-model` override beats the profile.
-- Verify the actual route after the next real card:
-  `grep "OpenAI client created" ~/.hermes/profiles/<p>/logs/agent.log`.
+- **Resolve dictated model names against the live catalog** before pinning
+  (operator dictates; "gpt 5 astra" may only exist as `gpt-6-astra`): custom
+  providers via `hermes-provider-model-discovery`'s
+  `probe_endpoint_catalog.py <provider>`, built-ins via
+  `hermes_cli.models.provider_model_ids('<provider>')` in the install venv.
+  Pin the nearest existing id and name the substitution in the report.
+- **Stale endpoint in the model section.** `profile-set` drops `base_url` /
+  `key_env` / `api_mode` only when the provider *changes*; a profile already
+  on the target provider can still carry another host's `base_url`, and every
+  call then fails 401 on the wrong host. After any `--model`, read
+  `HERMES_HOME=<p> hermes config get model --json`; a named provider needs
+  only `default` + `provider` — `hermes config unset model.<key>` the rest.
+- **Keys of a built-in provider** (e.g. `opencode-go`) are not in a profile
+  cloned before the key was added: copy the line without printing it —
+  `grep -q '^VAR=' <p>/.env || grep '^VAR=' ~/.hermes/.env >> <p>/.env`.
+- **Verify every changed profile now, not after the next card**: a one-shot
+  `HERMES_HOME=~/.hermes/profiles/<p> hermes -z "Reply with exactly one word: pong"`,
+  then the served model from the profile's own db —
+  `sqlite3 <p>/state.db "select model, billing_provider from sessions order by started_at desc limit 1"`.
+  `logs/agent.log` is not written by `-z`, so its last line is a stale run.
+
+### Extra role profiles (beyond impl/review/fix)
+
+The method (section 4 of `hermes-kanban-development`) says how they take
+cards (`KANBAN_ASSIGNEE`, base role). Here: create with `hermes profile
+create`, then `KC profile-set` as above. The clone carries the operator's whole
+`MEMORY.md`, and `write_file` refuses to overwrite a file it has not read —
+`rm` it, then write role-only memory (role, repo, workspace boundary, gate, how
+it reports). A fallback the operator explicitly allowed means
+`--worker-fallback allow` even on a profile that commits. Record the profiles
+and their card command in the project's runbook (no model ids).
 
 ## Tests
 
