@@ -35,11 +35,38 @@ for arg in "$@"; do
   esac
 done
 
+# The test home's gateway, when one runs from the fork's code: the pid from its state file, or nothing.
+# The Desktop backend is `gateway run` now (older builds spawned `hermes serve`).
+test_gateway_pid() {
+  local state="$TEST_HOME/home/gateway_state.json"
+  [ -f "$state" ] || return 0
+  /usr/bin/python3 - "$state" "$TEST_HOME/home" "$FORK" <<'PY'
+import json, os, sys
+st = json.load(open(sys.argv[1]))
+argv0 = str((st.get("argv") or [""])[0])
+pid = int(st.get("pid") or 0)
+if (st.get("kind") == "hermes-gateway" and st.get("gateway_state") == "running" and pid
+        and os.path.realpath(str(st.get("hermes_home") or "")) == os.path.realpath(sys.argv[2])
+        and argv0.startswith(sys.argv[3].rstrip("/") + "/")):
+    try:
+        os.kill(pid, 0)
+        print(pid)
+    except OSError:
+        pass
+PY
+}
 stop_instance() {
-  test_instance_running || return 0
-  pkill -TERM -f -- "/Contents/MacOS/Hermes $MARK" || true
-  for _ in $(seq 1 30); do test_instance_running || return 0; sleep 1; done
-  fail "test instance did not quit within 30 s"
+  if test_instance_running; then
+    pkill -TERM -f -- "/Contents/MacOS/Hermes $MARK" || true
+    for _ in $(seq 1 30); do test_instance_running || break; sleep 1; done
+    test_instance_running && fail "test instance did not quit within 30 s"
+  fi
+  # The app's quit leaves its gateway running (it holds the test home's kanban lock and port).
+  local gw; gw=$(test_gateway_pid)
+  [ -n "$gw" ] || return 0
+  kill -TERM "$gw" 2>/dev/null || true
+  for _ in $(seq 1 30); do kill -0 "$gw" 2>/dev/null || return 0; sleep 1; done
+  fail "test gateway (pid $gw) did not stop within 30 s"
 }
 for arg in "$@"; do [ "$arg" = --stop ] && { stop_instance; ok "test instance stopped"; exit 0; }; done
 
@@ -175,7 +202,7 @@ PY
   up=false
   for _ in $(seq 1 120); do
     test_instance_running || fail "test instance exited — see $ILOG"
-    if pgrep -f "$FORK_VENV/bin/python -m hermes_cli.main serve" >/dev/null; then up=true; break; fi
+    if [ -n "$(test_gateway_pid)" ] || pgrep -f "$FORK_VENV/bin/python -m hermes_cli.main serve" >/dev/null; then up=true; break; fi
     sleep 1
   done
   $up || fail "test instance started but no backend from $FORK within 120 s — see $ILOG"
