@@ -69,7 +69,12 @@ if [ -n "$live" ]; then
   msg="$(echo "$live" | wc -l | tr -d ' ') turn(s)/subagent(s) still running in a Hermes window deploy would close"
   if $dry_run || $ignore_live; then echo "WARNING: $msg"; else fail "$msg (wait for them, or --ignore-live-turns)"; fi
 fi
-git -C "$INSTALL" fetch -q "$FORK" "$BRANCH" || fail "fetch of $FORK/$BRANCH into $INSTALL failed"
+# A partial-clone install (filter tree:0) advertises commits whose trees and blobs it never
+# downloaded; after an upstream merge the fork then omits exactly those objects and the fetch
+# dies on "did not send all necessary objects". Retry without negotiation: the fork sends all.
+git -C "$INSTALL" fetch -q "$FORK" "$BRANCH" 2>/dev/null \
+  || git -C "$INSTALL" -c fetch.negotiationAlgorithm=noop fetch -q "$FORK" "$BRANCH" \
+  || fail "fetch of $FORK/$BRANCH into $INSTALL failed"
 git -C "$INSTALL" merge-base --is-ancestor HEAD FETCH_HEAD \
   || fail "$INSTALL has commits that $FORK/$BRANCH lacks — merge them into the fork first"
 echo "install $(git -C "$INSTALL" rev-parse --short "$old") → $(git -C "$FORK" rev-parse --short "$new"), $(git -C "$FORK" rev-list --count "$old..$new") commit(s)"
