@@ -104,7 +104,10 @@ with clean upstream; only new ones are ours. Commit the test to the worktree bra
 
 ## Rules
 
-- **Push only on the operator's explicit word**, and only the integration branch to its remote.
+- **Push only on the operator's explicit word**, to the fork's remote: `--push` pushes the
+  integration branch before the deploy and, once the deploy succeeded, every feature-worktree
+  branch, since others build the integration branch from the fork. A rejected worktree branch
+  (diverged from the remote) is reported, never forced; force-push it only on the operator's word.
 - **Inside Hermes the operator runs deploy, not the agent.** Deploy quits the app, which kills the
   agent's own turn, background subagents of other chats and the app's terminal panes. `deploy.sh`
   refuses when `HERMES_SESSION_ID` or `HERMES_DESKTOP_TERMINAL` is set (`--dry-run` still works)

@@ -38,11 +38,8 @@ if $upstream; then
 fi
 
 step "worktree branches → $BRANCH"
-main_wt=$(git -C "$FORK" rev-parse --show-toplevel)
 to_merge=()
 while IFS=$'\t' read -r path branch; do
-  [ "$path" = "$main_wt" ] && continue
-  if [ -n "$WT_ROOT" ]; then case $path in "$WT_ROOT"/*) ;; *) continue ;; esac; fi
   [ -n "$branch" ] || { echo "skip $path: detached HEAD"; continue; }
   [ "$branch" = "$BRANCH" ] && continue
   [ -d "$path" ] || { echo "skip $branch: worktree dir $path is gone (prunable)"; continue; }
@@ -53,9 +50,7 @@ while IFS=$'\t' read -r path branch; do
   fi
   echo "to merge: $branch (+$ahead)"
   to_merge+=("$branch")
-done < <(git -C "$FORK" worktree list --porcelain | awk '
-  /^worktree /{p=substr($0,10); b=""} /^branch /{b=substr($0,19)} /^$/{if(p!="") print p "\t" b; p=""}
-  END{if(p!="") print p "\t" b}')
+done < <(wt_branches)
 
 if $dry_run; then
   ok "dry run, nothing merged; ${#to_merge[@]} branch(es) to merge: ${to_merge[*]:-none}"

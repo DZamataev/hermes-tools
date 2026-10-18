@@ -81,6 +81,18 @@ require_branch_clean() {  # $1 = checkout; package-lock.json churn is desktop-bu
 }
 
 # The packaged desktop build of a checkout (release/mac-<arch>/Hermes.app), or nothing.
+wt_branches() {  # prints "<path>\t<branch>" for each feature worktree of $FORK (branch empty when detached)
+  local main_wt; main_wt=$(git -C "$FORK" rev-parse --show-toplevel)
+  git -C "$FORK" worktree list --porcelain | awk '
+    /^worktree /{p=substr($0,10); b=""} /^branch /{b=substr($0,19)} /^$/{if(p!="") print p "\t" b; p=""}
+    END{if(p!="") print p "\t" b}' |
+  while IFS=$'\t' read -r path branch; do
+    [ "$path" = "$main_wt" ] && continue
+    if [ -n "$WT_ROOT" ]; then case $path in "$WT_ROOT"/*) ;; *) continue ;; esac; fi
+    printf '%s\t%s\n' "$path" "$branch"
+  done
+}
+
 release_app() {  # $1 = checkout
   local a
   for a in "$1"/apps/desktop/release/mac*/Hermes.app; do [ -d "$a" ] && { echo "$a"; return 0; }; done

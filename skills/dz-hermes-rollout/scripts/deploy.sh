@@ -6,7 +6,8 @@
 #
 #   deploy.sh --dry-run     plan only
 #   deploy.sh               deploy (refuses unless verify.sh recorded the current branch sha)
-#   deploy.sh --push        also push the branch from the fork first — ONLY on the operator's word
+#   deploy.sh --push        also push the branch from the fork first and, after a successful deploy,
+#                           every feature-worktree branch (never forced) — ONLY on the operator's word
 #   (refuses inside Hermes, but --dry-run: it prints the command for the operator to run from a terminal)
 #   --no-relaunch           leave the app closed        --unverified   skip the verified-sha check
 #   --ignore-live-turns     deploy although a Hermes window it closes has a turn running
@@ -80,7 +81,7 @@ git -C "$INSTALL" merge-base --is-ancestor HEAD FETCH_HEAD \
 echo "install $(git -C "$INSTALL" rev-parse --short "$old") → $(git -C "$FORK" rev-parse --short "$new"), $(git -C "$FORK" rev-list --count "$old..$new") commit(s)"
 
 if $dry_run; then
-  $push && echo "would run: git -C $FORK push $PUSH_REMOTE $BRANCH"
+  $push && echo "would run: git -C $FORK push $PUSH_REMOTE $BRANCH; after the deploy: git -C $FORK push $PUSH_REMOTE $(wt_branches | cut -f2 | xargs)"
   echo "would: quit Hermes, fast-forward $INSTALL, sync deps (launcher), rebuild desktop into $APP$([ -n "$POST_DEPLOY" ] && echo ", run the post-deploy hook")$([ "$RESTART_GATEWAY" = 1 ] && echo ", restart gateway")$([ "$nssh" -gt 0 ] && echo ", restart $nssh SSH backend(s)")$($relaunch && echo ", open $APP")"
   inside_hermes && echo "the operator runs, from a terminal outside Hermes after closing it: $cmd"
   ok "dry run"
@@ -146,4 +147,16 @@ if $relaunch; then
   open "$APP"
 fi
 
-ok "install $(git -C "$INSTALL" rev-parse --short HEAD)$($push && echo ", $BRANCH pushed")"
+# Others build the integration branch from the fork, and its merges point at these branches.
+wt_note=""
+if $push; then
+  step "push worktree branches"
+  wt=$(wt_branches | cut -f2 | xargs)
+  if [ -n "$wt" ]; then
+    # shellcheck disable=SC2086  # one refspec per branch
+    git -C "$FORK" push "$PUSH_REMOTE" $wt && wt_note=", worktree branches pushed" \
+      || { wt_note=", WARNING: some worktree branches not pushed (see above; never forced)"; echo "WARNING: worktree branch push failed for some of: $wt"; }
+  fi
+fi
+
+ok "install $(git -C "$INSTALL" rev-parse --short HEAD)$($push && echo ", $BRANCH pushed")$wt_note"
