@@ -130,24 +130,34 @@ if $app; then
   step "seed $TEST_HOME"
   H=$TEST_HOME/home
   mkdir -p "$H" "$TEST_HOME/desktop"
-  if $reseed || [ ! -f "$H/config.yaml" ]; then
-    # No messaging platforms / cron / API server: the live gateway owns the bot tokens and the port.
-    # No auth.json: OAuth refresh tokens rotate; a second copy would log the live install out.
-    fork_env python - "$LIVE_HOME/config.yaml" "$H/config.yaml" <<'PY'
+  # Messaging/API-server env names; config.yaml may carry them as top-level keys too (the gateway
+  # reads those like .env), and a second API server on the live port makes the test gateway exit.
+  live_only='(TELEGRAM|DISCORD|SLACK|WHATSAPP|SIGNAL|MATRIX|MATTERMOST|WECOM|FEISHU|LARK|DINGTALK|WEIXIN|YUANBAO|TWILIO|SMS|EMAIL|HOMEASSISTANT|API_SERVER)_'
+  # No messaging platforms / cron / API server: the live gateway owns the bot tokens and the port.
+  seed_config() {
+    fork_env python - "$1" "$H/config.yaml" "$live_only" <<'PY'
+import re
 import sys
 import hermes_yaml as yaml  # the repo's YAML wrapper; PyYAML is not a dependency
 cfg = yaml.safe_load(open(sys.argv[1])) or {}
 for k in ("platforms", "cron"):
     cfg.pop(k, None)
+for k in [k for k in cfg if re.match(sys.argv[3], str(k))]:
+    cfg.pop(k)
 yaml.safe_dump(cfg, open(sys.argv[2], "w"), sort_keys=False, allow_unicode=True)
 PY
-    grep -vE '^\s*(export\s+)?(TELEGRAM|DISCORD|SLACK|WHATSAPP|SIGNAL|MATRIX|MATTERMOST|WECOM|FEISHU|LARK|DINGTALK|WEIXIN|YUANBAO|TWILIO|SMS|EMAIL|HOMEASSISTANT|API_SERVER)_' \
+  }
+  if $reseed || [ ! -f "$H/config.yaml" ]; then
+    # No auth.json: OAuth refresh tokens rotate; a second copy would log the live install out.
+    seed_config "$LIVE_HOME/config.yaml"
+    grep -vE "^\s*(export\s+)?$live_only" \
       "$LIVE_HOME/.env" >"$H/.env" 2>/dev/null || true
     chmod 600 "$H/.env"
     [ -f "$LIVE_HOME/SOUL.md" ] && cp "$LIVE_HOME/SOUL.md" "$H/SOUL.md"
-    echo "seeded config.yaml (no platforms/cron), .env (no messaging/API server keys), SOUL.md"
+    echo "seeded config.yaml (no platforms/cron/messaging or API server keys), .env (same), SOUL.md"
   else
-    echo "kept existing seed (--reseed to refresh)"
+    seed_config "$H/config.yaml"  # an older seed may still carry the live-only keys
+    echo "kept existing seed (--reseed to refresh); live-only keys scrubbed"
   fi
 
   step "start test instance"
