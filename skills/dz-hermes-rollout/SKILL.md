@@ -51,8 +51,10 @@ or CLI, Claude Code, Codex), the live install and which code it runs, the fork c
   everything succeeded on a fork, it ends by offering `dz-kanban setup` for Kanban development.
 
 The harness sets who runs deploy: inside Hermes (`harness=hermes`, or `hermes_desktop=yes` for an
-agent started in the app's terminal pane) the agent runs only `deploy.sh --dry-run` and gives the
-operator the command (see Rules); from any other harness the agent may run `deploy.sh` itself.
+agent started in the app's terminal pane) the agent runs `merge.sh` and `deploy.sh --dry-run` only,
+and gives the operator the commands for BOTH `verify.sh` and `deploy.sh` (see Rules): Hermes's
+terminal guard refuses `verify.sh` because it stops and restarts a gateway, which would kill the
+agent's own command. From any other harness the agent may run all of them itself.
 Initial setup needs a harness other than Hermes, since there is no Hermes yet: the skill installs
 into Claude Code or Codex with `skills/install.sh --target claude|codex`.
 
@@ -69,16 +71,40 @@ into Claude Code or Codex with `skills/install.sh --target claude|codex`.
    commit the branch last merged, and only failures upstream lacks are ours: fix those in the
    owning worktree, merge again, verify again. Desktop tests are not part of it: when merged
    branches touch `apps/desktop`, also run its typecheck and the changed `*.test.ts(x)` files
-   headless with vitest. The step then starts the **test instance**, a second Hermes window on the
+   headless with vitest. Then the **fork's Playwright specs** run (every `apps/desktop/e2e/*.spec.ts`
+   the fork added or changed since its upstream sync point; windows transparent and click-through,
+   log `verify-e2e.log` in the rollout state dir): they are the UI proof of the fork's own features,
+   so any failure is ours, and a feature without one is not proven on Desktop's real backend.
+   `--no-e2e` skips them, on the operator's word. The step then starts the **test instance**, a second Hermes window on the
    fork's build and backend with an isolated home. Run the one-shot check the script prints, then
    hand the operator a checklist: a normal chat plus each shipped feature, concretely. Wait for
    their confirmation. A branch updated after verify (polish asked for in the test window):
    `merge.sh && verify.sh --stop; verify.sh` rebuilds the test instance on the new commit.
+   `verify.sh --no-tests` skips straight to the build and test instance (the record says
+   `tests=none`, which deploy still accepts; tell the operator which run proved the tests). Use it
+   when the tests already passed for this exact sha and only the test-instance stage failed, or,
+   on the operator's word, when the install is far behind: the preconditions line shows the commit
+   and changed-test-file counts, and over a thousand files means an hour or more of tests. Say so
+   when it shows, not after a long silent wait.
+   - **"no backend from <fork> within 120 s":** read `<test home>/logs/gateway.log` before
+     anything else. A startup conflict there ("Port … already in use") means a live-only key
+     reached the test config: besides `platforms`, `config.yaml` can carry env-style top-level
+     keys (`API_SERVER_*`, messaging tokens) that the gateway reads like `.env`.
+   - **An error the operator reports from the test window:** renderer errors and toasts land in
+     `~/.hermes-dev/home/logs/desktop.log`, the turn (provider errors, retries, 429s) in
+     `agent.log`, inbound messages in `gateway.log`. Line them up by timestamp before guessing,
+     and separate code failures from provider/quota ones.
+   - Run `deploy.sh --dry-run` right after verify, not only at the end: it performs the real
+     fetch into the install, so object/fetch failures surface while the operator still waits.
 3. **Deploy, only after the operator confirms.** `deploy.sh` (`--push` only on the operator's
    explicit word). It refuses a sha `verify.sh` did not pass (`--unverified` only on their word)
    and refuses while a window it would close has a turn or a background subagent running (see
    Rules). Inside Hermes run `deploy.sh --dry-run [--push]`, then hand the operator the absolute
-   command it prints. When the operator says it is done, check: the install's `git log -1` and,
+   command it prints. **Re-check the integration branch's sha first** (`git -C <fork> log -1
+   --oneline <branch>`): other sessions merge their worktrees into it too, so it can move past the
+   verified sha while the operator tests; deploy then refuses, and a plain push would ship
+   unverified commits. Tell the operator what moved it and offer verify again or a push on their
+   word. When the operator says it is done, check: the install's `git log -1` and,
    after `--push`, the pushed remote branch at the new sha; the app bundle's
    `Contents/Resources/app.asar` freshly written; `hermes gateway status` running. Report the
    final shas of the branch and the install.
@@ -142,6 +168,10 @@ a Desktop on another machine started here over SSH (`hermes serve … --ssh-sess
 - **`hermes update` and the in-app update are not this flow.** They follow upstream's default
   branch: on the integration branch they switch the install back to upstream and the fork's
   features vanish. Update only through these scripts.
+- **Other machines' installs (m1/m4 mac minis, Steam Deck)** have no fork checkout, so these
+  scripts do not run there: replay deploy's steps over ssh, detached, per
+  `steam-deck-remote-work` → `references/hermes-remote-install.md`. `hermes update` is just as
+  wrong there.
 - **Any `hermes` launch after a fast-forward of the install** runs the source-update completion,
   which rebuilds the desktop and overwrites the app unless it is running. Never `git pull` in the
   install by hand.
@@ -162,4 +192,26 @@ a Desktop on another machine started here over SSH (`hermes serve … --ssh-sess
 - **`scripts/run_tests.sh $FILES` under zsh gets one argument** (zsh does not word-split); pass an
   array or use `xargs`.
 - The test instance's home has the live config and `.env` without messaging platforms, cron and
-  the API server, and no `auth.json`: OAuth-only providers need a sign-in there.
+  the API server (also as top-level `config.yaml` keys), and no `auth.json`: OAuth-only providers
+  need a sign-in there. Its backend is the Desktop's own local `gateway run` (older builds spawned
+  `hermes serve`), which runs from the fork checkout's sources and outlives the app's quit:
+  `verify.sh --stop` stops both, and a merge into the fork changes the code under a running one.
+- **The live install is a partial clone (`tree:0`).** It advertises upstream commits whose trees
+  and blobs it never downloaded, so after an upstream merge a plain fetch from the fork fails
+  with "did not send all necessary objects"; `deploy.sh` then retries with
+  `fetch.negotiationAlgorithm=noop` (one full local transfer, ~2 min). Never "fix" it by
+  touching objects in the install by hand: each `cat-file` lazily fetches one blob and the next
+  missing one appears.
+- **A worktree branch the push rejects as diverged** was usually rebased locally after an old
+  version was pushed. `git cherry <local> origin/<branch>` lists the remote's commits; when every
+  one has a local counterpart (same subjects) and `git merge-base --is-ancestor
+  origin/<branch> <integration branch>` holds, the old commits stay reachable and the fix is
+  `git push --force-with-lease=<branch>:<old remote sha> origin <branch>`, on the operator's word.
+  Merging the remote into the branch instead would duplicate every commit.
+- **Fixing these scripts:** edit the source in the hermes-tools checkout
+  (`skills/dz-hermes-rollout/`), `bash -n` it, run the change's dry-run path (`merge.sh
+  --dry-run`, `deploy.sh --dry-run --push`), reinstall with `skills/install.sh --force
+  dz-hermes-rollout`, commit there; push hermes-tools only on the operator's word. Before the
+  reinstall, `diff -r` the installed copy against the source: `skill_manage` patches land in the
+  installed copy only, and `--force` replaces it (the old copy goes to
+  `~/.hermes/backups/skills/`). Carry installed-only edits into the source first.

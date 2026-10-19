@@ -6,19 +6,23 @@
 #      failures upstream does not have count as ours;
 #   3. test instance: builds the fork's desktop app and starts it with a backend from the fork and
 #      an isolated home (seeded from the live home without messaging platforms, cron, the API
-#      server or auth.json) next to the live app. The operator then checks it by hand.
+#      server or auth.json) next to the live app. The operator then checks it by hand. Before it,
+#      the Playwright specs the fork added or changed (apps/desktop/e2e/*.spec.ts since the
+#      upstream commit it last merged) run against that build, windows transparent and
+#      click-through: the UI seams of the fork's own features. Any failure is ours.
 #
 #   verify.sh               all of the above
 #   verify.sh --full        whole test suite instead of the changed files
 #   verify.sh --since REF   test files changed since REF instead of since the install's commit
 #   verify.sh --no-tests    skip 2 (app only)       verify.sh --no-app   skip 3
+#   verify.sh --no-e2e      skip the fork's Playwright specs
 #   verify.sh --reseed      re-copy config.yaml/.env/SOUL.md into the test home before starting
 #   verify.sh --stop        stop the test instance and exit
 #
 # On success writes "<sha> ..." to the verified stamp — deploy.sh refuses any other sha.
 . "$(dirname "$0")/lib.sh"
 
-tests=changed app=true reseed=false since=""
+tests=changed app=true e2e=true reseed=false since=""
 prev=""
 for arg in "$@"; do
   if [ "$prev" = --since ]; then since=$arg; prev=""; continue; fi
@@ -28,9 +32,10 @@ for arg in "$@"; do
     --full) tests=full ;;
     --no-tests) tests=none ;;
     --no-app) app=false ;;
+    --no-e2e) e2e=false ;;
     --reseed) reseed=true ;;
     --stop) ;;
-    -h|--help) sed -n '2,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,23p' "$0"; exit 0 ;;
     *) echo "verify: unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -153,6 +158,29 @@ if $app; then
   git -C "$FORK" checkout -- package-lock.json 2>/dev/null || true
   TEST_APP=$(release_app "$FORK")
   [ -n "$TEST_APP" ] && [ -x "$TEST_APP/Contents/MacOS/Hermes" ] || fail "no built app under $FORK/apps/desktop/release"
+  FORK_VENV=$(fork_env bash -c 'echo "${PYTHONPATH#*:}"'); FORK_VENV=${FORK_VENV%/lib/python*}
+  [ -x "$FORK_VENV/bin/python" ] || fail "fork environment python not found: $FORK_VENV"
+
+  if $e2e; then
+    specs=()
+    if UPB=$(git -C "$FORK" merge-base "$SHA" "$UPSTREAM" 2>/dev/null); then
+      while IFS= read -r f; do
+        [ -f "$FORK/$f" ] && specs+=("${f#apps/desktop/}")
+      done < <(git -C "$FORK" diff --name-only "$UPB" "$SHA" -- 'apps/desktop/e2e/*.spec.ts')
+    fi
+    step "desktop e2e (${#specs[@]} fork spec(s))"
+    if [ ${#specs[@]} -gt 0 ]; then
+      ELOG=$STATE_DIR/verify-e2e.log
+      # Playwright drives `electron .` against apps/desktop/dist, not the packaged app above.
+      (cd "$FORK/apps/desktop" && npm run build) >"$ELOG" 2>&1 || fail "desktop dist build failed — see $ELOG"
+      rc=0
+      (cd "$FORK/apps/desktop" && env -u PYTHONPATH -u PYTHONHOME E2E_HIDE_WINDOWS=1 \
+        HERMES_DESKTOP_PYTHON="$FORK_VENV/bin/python" npx playwright test "${specs[@]}" --reporter=line) \
+        >>"$ELOG" 2>&1 || rc=$?
+      grep -E '^ +[0-9]+ (passed|failed|flaky|skipped)' "$ELOG" | sed 's/^ */  /' || true
+      [ $rc -eq 0 ] || fail "fork desktop e2e failed — see $ELOG"
+    fi
+  fi
 
   step "seed $TEST_HOME"
   H=$TEST_HOME/home
@@ -189,8 +217,6 @@ PY
 
   step "start test instance"
   stop_instance
-  FORK_VENV=$(fork_env bash -c 'echo "${PYTHONPATH#*:}"'); FORK_VENV=${FORK_VENV%/lib/python*}
-  [ -x "$FORK_VENV/bin/python" ] || fail "fork environment python not found: $FORK_VENV"
   ILOG=$TEST_HOME/desktop.log
   cd "$FORK" || fail "cannot enter $FORK"
   # No subshell around the `&`: a lingering subshell keeps the caller's stdout pipe open.
@@ -210,5 +236,5 @@ PY
   echo "one-shot check: HERMES_HOME=$H $FORK_VENV/bin/python $FORK/hermes chat -Q -q ok"
 fi
 
-echo "$SHA $(date '+%F %T') tests=$tests app=$app" >"$VERIFIED"
-ok "$BRANCH $(git -C "$FORK" rev-parse --short "$SHA") verified (tests=$tests, app=$app). Check the test instance by hand, then: deploy.sh [--push]; stop it with verify.sh --stop"
+echo "$SHA $(date '+%F %T') tests=$tests app=$app e2e=$e2e" >"$VERIFIED"
+ok "$BRANCH $(git -C "$FORK" rev-parse --short "$SHA") verified (tests=$tests, app=$app, e2e=$e2e). Check the test instance by hand, then: deploy.sh [--push]; stop it with verify.sh --stop"
