@@ -1,0 +1,52 @@
+# voice-control
+
+A status-bar switch for a headless voice Hermes: a Hermes CLI that a service keeps in a tmux
+session on another machine (here CT 125 `voice`, started by `hermes-voice.service`). One click
+turns its microphone off, another turns it back on.
+
+| Chip | Meaning |
+|---|---|
+| 🎙 | listening: the "Hey Hermes" listener holds the microphone |
+| 🔇 | microphone off |
+| — | unknown: host unreachable, tmux session missing, or this plugin's backend not enabled. The tooltip and popover say which |
+| … | switching |
+
+## What it does on the assistant host
+
+The backend runs `ssh <ssh_host> bash -s -- <status|on|off> <tmux_session>` and feeds
+[`dashboard/remote.sh`](dashboard/remote.sh) over stdin. Nothing is installed on the host.
+
+- **Off** types `/wake off` and `/voice off` into the CLI. `/wake off` stops the listener and saves
+  `wake_word.enabled: false`, so the microphone stays off after a service restart or reboot.
+  `/voice off` also cancels a recording already in progress (a follow-up window).
+- **On** types `/voice on` and `/wake on` (saves `wake_word.enabled: true`).
+- **State** is read from the kernel, not from the CLI's output: listening means the CLI's process
+  tree holds an ALSA capture device (`/dev/snd/pcmC*D*c`) open.
+- **A running turn is never interrupted.** With the default `busy_input_mode: interrupt`, a line
+  typed during a turn redirects that turn, so the script waits while the prompt shows
+  `❯ msg=interrupt|queue|steer` (up to 20 s) and then reports `busy` instead of typing.
+
+## Settings
+
+Settings → Plugins → voice-control (stored in `plugins.entries.voice-control.settings`):
+
+| Key | Default | |
+|---|---|---|
+| `ssh_host` | `ct125-voice` | `~/.ssh/config` alias or `user@host`. ssh runs with `BatchMode=yes`: the key must not ask for a passphrase |
+| `tmux_session` | `voice` | the session holding the voice CLI |
+
+The host must already accept `ssh <ssh_host>` from this Mac. For CT 125 the alias goes through PVE,
+because the container's subnet is not routed from the LAN — see
+`homelab/hosts/ct125-voice.md`.
+
+## Install
+
+`./setup_hermes_tools.sh` from the repository root, restart Hermes Desktop, then turn on the
+desktop half in Capabilities → Plugins.
+
+## Tests
+
+```bash
+./tests/run.sh          # remote.sh syntax, backend (ssh faked), renderer — offline
+./tests/run.sh --e2e    # flips the real assistant's microphone off and back on, restoring it
+```

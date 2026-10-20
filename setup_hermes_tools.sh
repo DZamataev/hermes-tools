@@ -15,10 +15,10 @@ set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 hermes_home=${HERMES_HOME:-"${HOME}/.hermes"}
 
-# Both plugins are unified packages: a desktop half the renderer loads and a
+# Every plugin here is a unified package: a desktop half the renderer loads and a
 # Python half the gateway imports. They install identically, so the work lives
 # in one function rather than in two copies that drift apart.
-packages='comp-count provider-limits'
+packages='comp-count provider-limits voice-control'
 
 # Refuse EVERY incomplete source before writing anything: a half-installed
 # plugin whose backend is missing still gets imported and fails at runtime.

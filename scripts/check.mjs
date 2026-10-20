@@ -21,6 +21,7 @@ const suites = [
   { name: 'setup_hermes_tools', cmd: ['sh', 'tests/test-setup-hermes-tools.sh'] },
   { name: 'comp-count', cmd: ['bash', 'plugins/comp-count/tests/run.sh'] },
   { name: 'provider-limits', cmd: ['bash', 'plugins/provider-limits/tests/run.sh'] },
+  { name: 'voice-control', cmd: ['bash', 'plugins/voice-control/tests/run.sh'] },
   { name: 'kanban', cmd: ['bash', 'kanban/tests/run.sh'] },
   { name: 'clean-worktrees', cmd: ['bash', 'skills/dz-clean-worktrees/tests/run.sh'] },
   { name: 'wrapup', cmd: ['bash', 'skills/dz-wrapup/tests/run.sh'] },

@@ -1,0 +1,16 @@
+name: voice-control
+version: 0.1.0
+description: "Turn a headless voice Hermes's microphone on and off over ssh, from the desktop status bar."
+author: "Denis"
+kind: standalone
+config_schema:
+  ssh_host:
+    type: str
+    default: ct125-voice
+    label: SSH host
+    description: "~/.ssh/config alias (or user@host) of the machine running the voice Hermes. The key must work without a passphrase prompt."
+  tmux_session:
+    type: str
+    default: voice
+    label: tmux session
+    description: "tmux session holding the voice Hermes CLI (hermes-voice.service starts it as \"voice\")."

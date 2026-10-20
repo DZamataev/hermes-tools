@@ -1,0 +1,166 @@
+// Voice assistant — the microphone switch of a headless voice Hermes, in the status bar.
+//
+// The chip shows whether the assistant is listening (🎙), switched off (🔇) or
+// unknown (—, host unreachable or backend off). Tapping it opens a popover with
+// the host, the state and the one button that flips it.
+//
+// All work goes through this package's Python half
+// (`~/.hermes/plugins/voice-control/dashboard/plugin_api.py`) via `ctx.rest`; it
+// runs ssh to the host from the plugin settings. That half is imported only when
+// `voice-control` is in `plugins.enabled` — until then the chip shows a muted dash.
+import {
+  Button, Popover, PopoverContent, PopoverTrigger, STATUSBAR_AREAS,
+  useQuery, useQueryClient
+} from '@hermes/plugin-sdk'
+import { useState } from 'react'
+import { jsx, jsxs } from 'react/jsx-runtime'
+
+const ID = 'voice-control'
+const QUERY_KEY = [ID, 'state']
+// Captured in `register`: components render in the app's tree, outside its closure.
+let rest = async () => { throw new Error('plugin not registered') }
+let styleElement = null
+// One ssh round trip per poll (~1 s); the state only changes when someone flips it.
+const REFETCH_MS = 30_000
+// The backend may wait up to 20 s for a running turn before giving up.
+const TOGGLE_TIMEOUT_MS = 75_000
+
+const CSS = `
+.vc-chip{display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
+.vc-chip[data-tone="off"],.vc-chip[data-tone="unknown"]{color:var(--ui-text-tertiary)}
+.vc-popover{width:260px;display:flex;flex-direction:column;gap:8px;font-size:.72rem}
+.vc-title{font-weight:600}
+.vc-row{display:flex;justify-content:space-between;gap:8px;color:var(--ui-text-tertiary)}
+.vc-row>b{color:var(--ui-text-primary,inherit);font-weight:500}
+.vc-error{color:var(--dt-destructive);line-height:1.35}
+.vc-note{font-size:.62rem;line-height:1.4;color:var(--ui-text-quaternary);padding-top:6px;border-top:1px solid var(--ui-stroke-quaternary)}
+`
+
+/** What the chip draws for one moment: the query result, its error, a toggle in flight. */
+function chipView(data, error, pending) {
+  if (pending) return { glyph: '…', tone: 'unknown', title: 'Voice assistant: switching…' }
+  if (error) return { glyph: '—', tone: 'unknown', title: 'Voice assistant: plugin backend unavailable' }
+  if (!data || data.listening === null || data.listening === undefined) {
+    return { glyph: '—', tone: 'unknown', title: `Voice assistant: ${data?.message || 'state unknown'}` }
+  }
+  return data.listening
+    ? { glyph: '🎙', tone: 'on', title: `Voice assistant on ${data.host}: listening` }
+    : { glyph: '🔇', tone: 'off', title: `Voice assistant on ${data.host}: microphone off` }
+}
+
+/** The state line of the popover. */
+function stateLabel(data) {
+  if (!data || data.listening === null || data.listening === undefined) return 'unknown'
+  if (data.listening) return 'listening'
+  return 'microphone off'
+}
+
+function useVoiceState() {
+  return useQuery({
+    queryKey: QUERY_KEY,
+    queryFn: () => rest('/state'),
+    refetchInterval: REFETCH_MS,
+    staleTime: REFETCH_MS,
+    retry: false
+  })
+}
+
+function Panel({ data, error, pending, onToggle }) {
+  const known = data && typeof data.listening === 'boolean'
+  return jsxs('div', {
+    className: 'vc-popover',
+    children: [
+      jsx('div', { className: 'vc-title', children: 'Voice assistant' }),
+      jsxs('div', { className: 'vc-row', children: ['Host', jsx('b', { children: data?.host ?? '—' })] }),
+      jsxs('div', { className: 'vc-row', children: ['State', jsx('b', { children: pending ? 'switching…' : stateLabel(data) })] }),
+      error
+        ? jsx('div', { className: 'vc-error', children: 'Plugin backend unavailable: enable voice-control (hermes plugins enable voice-control) and restart Hermes.' })
+        : data?.error
+          ? jsx('div', { className: 'vc-error', children: data.message || data.error })
+          : null,
+      jsx(Button, {
+        size: 'sm',
+        variant: known && data.listening ? 'outline' : 'default',
+        disabled: pending || !known,
+        onClick: onToggle,
+        children: known && data.listening ? 'Turn microphone off' : 'Turn microphone on'
+      }),
+      jsx('div', {
+        className: 'vc-note',
+        children: 'Off stops the "Hey Hermes" listener and voice mode and is saved in the assistant\'s config, so it stays off after a restart.'
+      })
+    ].filter(Boolean)
+  })
+}
+
+function Chip() {
+  const { data, error } = useVoiceState()
+  const client = useQueryClient()
+  const [pending, setPending] = useState(false)
+  const view = chipView(data, error, pending)
+
+  const onToggle = async () => {
+    if (pending || !data || typeof data.listening !== 'boolean') return
+    setPending(true)
+    try {
+      const next = await rest('/state', {
+        method: 'POST', body: { listening: !data.listening }, timeoutMs: TOGGLE_TIMEOUT_MS
+      })
+      client.setQueryData(QUERY_KEY, next)
+    } catch (err) {
+      client.setQueryData(QUERY_KEY, { ...data, error: 'request_failed', message: String(err?.message || err) })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return jsxs(Popover, {
+    children: [
+      jsx(PopoverTrigger, {
+        asChild: true,
+        children: jsx(Button, {
+          variant: 'ghost',
+          size: 'micro',
+          'aria-label': view.title,
+          title: view.title,
+          children: jsx('span', { className: 'vc-chip', 'data-tone': view.tone, children: view.glyph })
+        })
+      }),
+      jsx(PopoverContent, {
+        side: 'top',
+        align: 'end',
+        'aria-label': 'Voice assistant',
+        children: jsx(Panel, { data, error, pending, onToggle })
+      })
+    ]
+  })
+}
+
+// Exported for tests; the app only consumes the default export.
+export { Chip, chipView, Panel, stateLabel }
+
+export default {
+  id: ID,
+  name: 'Voice assistant',
+  description: 'Turn the voice Hermes microphone on and off over ssh.',
+  register(ctx) {
+    rest = (path, opts) => ctx.rest(path, opts)
+
+    styleElement?.remove()
+    const style = document.createElement('style')
+    style.textContent = CSS
+    document.head.append(style)
+    styleElement = style
+    ctx.onDispose(() => {
+      style.remove()
+      if (styleElement === style) styleElement = null
+    })
+
+    ctx.register({
+      id: 'chip',
+      area: STATUSBAR_AREAS.right,
+      order: 112,
+      render: () => jsx(Chip, {})
+    })
+  }
+}

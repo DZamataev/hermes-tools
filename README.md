@@ -7,7 +7,7 @@ day on a Mac: things Hermes itself does not ship, built around the
 | Part | What it is | Why you would want it |
 |---|---|---|
 | [Skills](#skills) | Hermes skills: Kanban development, session wrap-up, worktree cleanup, memory mirror, fork rollout | repeatable procedures the agent runs the same way every time |
-| [Desktop plugins](#desktop-plugins) | `provider-limits`, `comp-count` for Hermes Desktop | provider quotas and a session's models, tokens and cost in the status bar |
+| [Desktop plugins](#desktop-plugins) | `provider-limits`, `comp-count`, `voice-control` for Hermes Desktop | provider quotas, a session's models, tokens and cost, and the voice assistant's microphone switch in the status bar |
 | [Hermes WebUI runner](#hermes-webui-runner) | a Dock app and a LaunchAgent for the pinned Hermes WebUI | the web interface on `:8787`, started by a click or at login |
 | [GUIDE.md](GUIDE.md) | the whole stack from scratch | the fork, TeamClaude on a VPS, codex-lb, keys, plugins, Kanban |
 
@@ -202,6 +202,7 @@ Each plugin has two halves: a Python backend (FastAPI routes) and a desktop UI.
 |---|---|
 | [`provider-limits`](plugins/provider-limits/README.md) | status-bar chip with each custom provider's remaining 5-hour quota, in `config.yaml` order; the popover adds weekly windows, per-account rows and upstream status. Reads providers and their `key_env` from `config.yaml` and sends each key only to its own provider |
 | `comp-count` | the 🧳 chip: the focused session's timeline (models, providers, segments, compactions), tokens and estimated API cost. The chip and the panel share one query, so their counts agree |
+| [`voice-control`](plugins/voice-control/README.md) | 🎙/🔇 chip: turns a headless voice Hermes's microphone on and off over ssh (`/wake` + `/voice` in its tmux CLI); the host is a plugin setting |
 
 ### Install and update
 
@@ -209,7 +210,7 @@ Each plugin has two halves: a Python backend (FastAPI routes) and a desktop UI.
 ./setup_hermes_tools.sh          # or: bun run setup
 ```
 
-It installs both plugins into `~/.hermes/plugins/` and enables their backend halves. Then:
+It installs the plugins into `~/.hermes/plugins/` and enables their backend halves. Then:
 
 1. **Quit and reopen Hermes Desktop** when the script asks (it says so only when a backend half
    changed). Plugin routes are mounted by the `hermes serve` child the app spawns for itself, not

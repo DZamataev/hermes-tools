@@ -37,6 +37,14 @@ fail() { print -u2 -- "FAIL: $*"; exit 1; }
   fail "provider-limits backend half is missing"
 [[ -x "$ROOT/plugins/provider-limits/tests/run.sh" ]] ||
   fail "provider-limits test bench is missing or not executable"
+[[ -f "$ROOT/plugins/voice-control/desktop/plugin.js" ]] ||
+  fail "voice-control desktop half is missing"
+[[ -f "$ROOT/plugins/voice-control/dashboard/plugin_api.py" ]] ||
+  fail "voice-control backend half is missing"
+[[ -f "$ROOT/plugins/voice-control/dashboard/remote.sh" ]] ||
+  fail "voice-control remote script is missing"
+[[ -x "$ROOT/plugins/voice-control/tests/run.sh" ]] ||
+  fail "voice-control test bench is missing or not executable"
 [[ -f "$ROOT/kanban/SKILL.md" ]] || fail "kanban skill is missing"
 for script in kanban-init.sh kanban-profiles.sh kanban-card.sh kanban-chain.py kanban-sync.py; do
   [[ -x "$ROOT/kanban/scripts/$script" ]] || fail "kanban/scripts/$script is missing or not executable"

@@ -104,9 +104,9 @@ cp -R "$root_dir/plugins" "$fixture_src/plugins"
 
 run_script >/dev/null
 
-# Both are two-half plugins: the desktop file alone is not enough, and a
+# All are two-half plugins: the desktop file alone is not enough, and a
 # backend is dead weight unless the gate is set.
-for name in comp-count provider-limits; do
+for name in comp-count provider-limits voice-control; do
   for half in desktop/plugin.js dashboard/plugin_api.py plugin.yaml tests/run.sh; do
     cmp -s "$root_dir/plugins/$name/$half" \
       "$test_dir/home/plugins/$name/$half" ||
@@ -119,8 +119,10 @@ done
 assert_equal "config get plugins.enabled
 plugins enable --no-allow-tool-override comp-count
 config get plugins.enabled
-plugins enable --no-allow-tool-override provider-limits" \
-  "$(cat "$test_dir/log")" 'enables both gates and restarts nothing on first install'
+plugins enable --no-allow-tool-override provider-limits
+config get plugins.enabled
+plugins enable --no-allow-tool-override voice-control" \
+  "$(cat "$test_dir/log")" 'enables every gate and restarts nothing on first install'
 
 # A first install cannot be finished by this script: the app's server imported
 # its modules before the plugin existed. Saying so IS the remedy, so the printed
@@ -135,6 +137,7 @@ grep -qi 'Capabilities' "$test_dir/out" ||
 : >"$test_dir/log"
 run_script >/dev/null
 assert_equal 'config get plugins.enabled
+config get plugins.enabled
 config get plugins.enabled' "$(cat "$test_dir/log")" \
   'does nothing when the plugins are already installed'
 

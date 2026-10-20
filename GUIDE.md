@@ -353,13 +353,14 @@ It installs two plugins into `~/.hermes/plugins/` and enables their backend halv
 |---|---|
 | `provider-limits` | status-bar chip with each custom provider's remaining 5-hour quota (TeamClaude, codex-lb), and a popover with weekly windows, per-account rows and upstream status |
 | `comp-count` | status-bar chip with the session's timeline: models, providers, compactions, tokens and estimated list-price cost |
+| `voice-control` | status-bar switch for a headless voice Hermes's microphone, over ssh; set the host in Settings → Plugins → voice-control |
 
 Then:
 
 1. **Quit and reopen Hermes Desktop.** Plugin backends are mounted only by the app's own server
    process at start. `hermes gateway restart` does not help: the gateway does not serve plugin
    routes.
-2. Open **Capabilities → Plugins** and turn on the desktop half of both plugins. The script cannot
+2. Open **Capabilities → Plugins** and turn on the desktop half of each plugin. The script cannot
    do this step: desktop halves are off by default as a security boundary.
 
 `provider-limits` needs no settings of its own. It reads the providers and their `key_env` from

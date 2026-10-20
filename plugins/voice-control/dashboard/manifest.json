@@ -1,0 +1,9 @@
+{
+  "name": "voice-control",
+  "label": "Voice assistant",
+  "description": "Turn a headless voice Hermes's microphone on and off over ssh",
+  "icon": "Mic",
+  "version": "0.1.0",
+  "tab": { "path": "/voice-control", "hidden": true },
+  "api": "plugin_api.py"
+}
