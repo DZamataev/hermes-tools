@@ -27,6 +27,7 @@ sdk.mkdir(parents=True)
 (sdk / "package.json").write_text(json.dumps({"name": "@hermes/plugin-sdk", "type": "module", "main": "index.js"}))
 (sdk / "index.js").write_text("""
 export const Button = () => null
+export const Input = () => null
 export const Popover = () => null
 export const PopoverContent = () => null
 export const PopoverTrigger = () => null
@@ -54,7 +55,7 @@ globalThis.document = {
   head: { append() {} }
 }
 const plugin = (await import('./plugin.js')).default
-const { Chip, chipView, Panel, stateLabel, MusicSection, musicLine } = await import('./plugin.js')
+const { Chip, chipView, Panel, stateLabel, MusicSection, musicLine, PromptBox } = await import('./plugin.js')
 
 const calls = []
 const registered = []
@@ -62,6 +63,7 @@ const OFF_REPLY = { host: 'ct125-voice', listening: false, wake_enabled: false, 
 plugin.register({
   rest: async (path, opts) => {
     calls.push([path, opts])
+    if (globalThis.__probeThrow) throw new Error(globalThis.__probeThrow)
     return globalThis.__probeReply ?? (path === '/music' ? { state: 'stopped', volume: 15 } : OFF_REPLY)
   },
   onDispose: () => {},
@@ -70,12 +72,13 @@ plugin.register({
 check('registers-one-statusbar-item', registered.length === 1 && registered[0].area === 'statusBar.right')
 
 // Walk the stub tree: invoke components, keep host elements' props (buttons carry onClick/disabled).
-function collect(node, acc = { text: [], buttons: [] }) {
+function collect(node, acc = { text: [], buttons: [], inputs: [] }) {
   if (node == null || node === false) return acc
   if (typeof node === 'string' || typeof node === 'number') { acc.text.push(String(node)); return acc }
   if (Array.isArray(node)) { node.forEach(n => collect(n, acc)); return acc }
   if (typeof node.t === 'function') {
     if (node.t.name === 'Button') acc.buttons.push(node.p)
+    if (node.t.name === 'Input') acc.inputs.push(node.p)
     const out = node.t(node.p)
     return collect(out ?? node.p?.children, acc)
   }
@@ -111,6 +114,7 @@ check('panel-pending-disables-toggle', byLabel(r.buttons, 'Turn microphone off')
 r = collect({ t: Panel, p: { data: undefined, error: new Error('404'), pending: false, onToggle: () => {} } })
 check('panel-backend-down-says-how-to-fix', r.text.some(t => t.includes('hermes plugins enable voice-control')))
 check('panel-carries-the-music-block', r.text.includes('Музыка'), r.text.join('|'))
+check('panel-carries-the-prompt-box', r.text.includes('Отправить'), r.text.join('|'))
 
 // --- the toggle posts the opposite state and stores the answer -----------------
 globalThis.__probeQuery = { data: ON, error: null }
@@ -209,6 +213,92 @@ const errorBox = (function find(n) {
   return null
 })(MusicSection({}))
 check('music-failure-shows-the-error-in-red', errorBox === 'the assistant host did not answer in time', JSON.stringify(errorBox))
+
+// --- the prompt box: type into the CLI's session; the answer comes back as speech ----
+// The stub useState() hands out one global value, so the box keeps its whole draft in one object.
+const errorText = tree => (function find(n) {
+  if (!n || typeof n !== 'object') return null
+  if (n.p?.className === 'vc-error') return [].concat(n.p.children ?? []).join('')
+  for (const c of [].concat(n.p?.children ?? [])) { const f = find(c); if (f) return f }
+  return null
+})(tree)
+
+globalThis.__probeThrow = null
+globalThis.__probeReply = { sent: true, error: null, message: '' }
+delete globalThis.__probePending
+r = collect({ t: PromptBox, p: {} })
+check('prompt-box-has-a-field-and-a-button', r.inputs.length === 1 && !!byLabel(r.buttons, 'Отправить'),
+  JSON.stringify({ inputs: r.inputs.length, buttons: r.buttons.map(b => b.children) }))
+check('prompt-box-idle-is-enabled', r.inputs[0].disabled === false && byLabel(r.buttons, 'Отправить').disabled === false,
+  JSON.stringify([r.inputs[0].disabled, byLabel(r.buttons, 'Отправить').disabled]))
+
+calls.length = 0
+r.inputs[0].onChange({ target: { value: '  привет  ' } })
+r = collect({ t: PromptBox, p: {} })
+check('prompt-box-keeps-what-was-typed', r.inputs[0].value === '  привет  ', JSON.stringify(r.inputs[0].value))
+await byLabel(r.buttons, 'Отправить').onClick()
+let pc = calls.at(-1)
+check('prompt-posts-the-trimmed-text', pc[0] === '/prompt' && pc[1].method === 'POST' && pc[1].body.text === 'привет',
+  JSON.stringify(pc))
+check('prompt-allows-the-backend-timeout', pc[1].timeoutMs >= 60000, String(pc[1].timeoutMs))
+const sentDraft = globalThis.__probePending
+check('prompt-clears-the-field-on-success', sentDraft?.text === '' && sentDraft?.pending === false, JSON.stringify(sentDraft))
+check('prompt-says-it-was-sent', !sentDraft?.status?.error && sentDraft?.status?.message.includes('Отправлено'),
+  JSON.stringify(sentDraft?.status))
+r = collect({ t: PromptBox, p: {} })
+check('prompt-renders-the-status', r.text.some(t => t.includes('Отправлено')), r.text.join('|'))
+
+calls.length = 0
+globalThis.__probeReply = { sent: true, error: null }
+r.inputs[0].onChange({ target: { value: 'громче' } })
+r = collect({ t: PromptBox, p: {} })
+let prevented = false
+r.inputs[0].onKeyDown({ key: 'Enter', preventDefault: () => { prevented = true } })
+await new Promise(done => setTimeout(done, 0))
+check('prompt-enter-submits', prevented && calls.at(-1)?.[0] === '/prompt' && calls.at(-1)[1].body.text === 'громче',
+  JSON.stringify(calls))
+calls.length = 0
+r.inputs[0].onKeyDown({ key: 'a', preventDefault() {} })
+check('prompt-other-keys-do-not-submit', calls.length === 0, JSON.stringify(calls))
+
+globalThis.__probePending = { text: 'ещё', pending: true, status: null }
+r = collect({ t: PromptBox, p: {} })
+check('prompt-pending-disables-the-field-and-button',
+  r.inputs[0].disabled === true && byLabel(r.buttons, 'Отправить').disabled === true,
+  JSON.stringify([r.inputs[0].disabled, byLabel(r.buttons, 'Отправить').disabled]))
+calls.length = 0
+await byLabel(r.buttons, 'Отправить').onClick()
+check('prompt-pending-does-not-post', calls.length === 0, JSON.stringify(calls))
+
+globalThis.__probePending = { text: '   ', pending: false, status: null }
+r = collect({ t: PromptBox, p: {} })
+calls.length = 0
+await byLabel(r.buttons, 'Отправить').onClick()
+check('prompt-blank-does-not-post', calls.length === 0, JSON.stringify(calls))
+
+// A refused send: the text stays in the field, the backend's reason is drawn in red.
+globalThis.__probeReply = { sent: false, error: 'busy',
+  message: 'the assistant is answering right now; try again when it finishes' }
+globalThis.__probePending = { text: 'привет', pending: false, status: null }
+r = collect({ t: PromptBox, p: {} })
+await byLabel(r.buttons, 'Отправить').onClick()
+const refusedDraft = globalThis.__probePending
+check('prompt-failure-keeps-the-text', refusedDraft?.text === 'привет' && refusedDraft?.status?.error === 'busy',
+  JSON.stringify(refusedDraft))
+r = collect({ t: PromptBox, p: {} })
+check('prompt-failure-shows-the-reason', r.text.some(t => t.includes('answering right now')), r.text.join('|'))
+check('prompt-failure-is-drawn-in-red',
+  (errorText(PromptBox({})) || '').includes('answering right now'), JSON.stringify(errorText(PromptBox({}))))
+
+globalThis.__probeThrow = 'backend is down'
+globalThis.__probePending = { text: 'привет', pending: false, status: null }
+r = collect({ t: PromptBox, p: {} })
+await byLabel(r.buttons, 'Отправить').onClick()
+const thrownDraft = globalThis.__probePending
+check('prompt-request-failure-is-shown',
+  thrownDraft?.status?.error === 'request_failed' && thrownDraft.status.message.includes('backend is down')
+  && thrownDraft?.pending === false, JSON.stringify(thrownDraft))
+globalThis.__probeThrow = null
 
 if (failures.length) {
   console.log(`renderer: ${failures.length} of ${checks} checks FAILED`)

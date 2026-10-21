@@ -1,17 +1,18 @@
 // Voice assistant — the microphone switch of a headless voice Hermes, in the status bar,
-// and a music block (the player on the same host) inside its popover.
+// a music block (the player on the same host) and a field that types a prompt into the
+// assistant's own session, all inside its popover.
 //
 // The chip shows whether the assistant is listening (🎙), switched off (🔇) or
 // unknown (—, host unreachable or backend off). Tapping it opens a popover with
-// the host, the state and the one button that flips it, then what is playing and
-// the pause / next / stop / volume controls.
+// the host, the state and the one button that flips it, a prompt field, then what is
+// playing and the pause / next / stop / volume controls.
 //
 // All work goes through this package's Python half
 // (`~/.hermes/plugins/voice-control/dashboard/plugin_api.py`) via `ctx.rest`; it
 // runs ssh to the host from the plugin settings. That half is imported only when
 // `voice-control` is in `plugins.enabled` — until then the chip shows a muted dash.
 import {
-  Button, Popover, PopoverContent, PopoverTrigger, STATUSBAR_AREAS,
+  Button, Input, Popover, PopoverContent, PopoverTrigger, STATUSBAR_AREAS,
   useQuery, useQueryClient
 } from '@hermes/plugin-sdk'
 import { useState } from 'react'
@@ -26,7 +27,7 @@ let styleElement = null
 // One ssh round trip per poll (~1 s); the state only changes when someone flips it.
 const REFETCH_MS = 30_000
 // The backend may wait up to 20 s for a running turn before giving up.
-const TOGGLE_TIMEOUT_MS = 75_000
+const TURN_TIMEOUT_MS = 75_000
 // The backend gives a music call 15 s.
 const MUSIC_TIMEOUT_MS = 20_000
 // Volume buttons move mpv by this much, like `music volume +10`.
@@ -46,6 +47,8 @@ const CSS = `
 .vc-controls{display:flex;align-items:center;gap:2px}
 .vc-spacer{flex:1}
 .vc-volume{min-width:2em;text-align:center;font-variant-numeric:tabular-nums}
+.vc-prompt{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--ui-stroke-quaternary)}
+.vc-prompt-row{display:flex;align-items:center;gap:4px}
 `
 
 /** What the chip draws for one moment: the query result, its error, a toggle in flight. */
@@ -139,6 +142,62 @@ function MusicSection() {
   })
 }
 
+/**
+ * Send a typed prompt into the CLI's session: the assistant answers and speaks the answer,
+ * so nothing of the reply comes back here. One state object, because the popover re-renders
+ * on every keystroke.
+ */
+function PromptBox() {
+  const [draft, setDraft] = useState({ text: '', status: null, pending: false })
+
+  const submit = async () => {
+    const text = (draft.text || '').trim()
+    if (!text || draft.pending) return
+    setDraft({ ...draft, pending: true, status: null })
+    let status
+    try {
+      const reply = await rest('/prompt', { method: 'POST', body: { text }, timeoutMs: TURN_TIMEOUT_MS })
+      status = reply?.error
+        ? { error: reply.error, message: reply.message || reply.error }
+        : { message: 'Отправлено — ответ прозвучит голосом' }
+    } catch (err) {
+      status = { error: 'request_failed', message: String(err?.message || err) }
+    }
+    // The text stays in the field when it did not go through, so it is not lost.
+    setDraft({ text: status.error ? draft.text : '', pending: false, status })
+  }
+
+  return jsxs('div', {
+    className: 'vc-prompt',
+    children: [
+      jsxs('div', {
+        className: 'vc-prompt-row',
+        children: [
+          jsx(Input, {
+            size: 'xs',
+            value: draft.text,
+            disabled: !!draft.pending,
+            placeholder: 'Спросить ассистента',
+            'aria-label': 'Текст для голосового ассистента',
+            onChange: e => setDraft({ ...draft, text: e.target.value, status: null }),
+            onKeyDown: e => {
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              submit()
+            }
+          }),
+          jsx(Button, {
+            size: 'micro', variant: 'ghost', disabled: !!draft.pending, onClick: submit, children: 'Отправить'
+          })
+        ]
+      }),
+      draft.status
+        ? jsx('div', { className: draft.status.error ? 'vc-error' : 'vc-row', children: draft.status.message })
+        : null
+    ].filter(Boolean)
+  })
+}
+
 function Panel({ data, error, pending, onToggle }) {
   const known = data && typeof data.listening === 'boolean'
   return jsxs('div', {
@@ -163,6 +222,7 @@ function Panel({ data, error, pending, onToggle }) {
         className: 'vc-note',
         children: 'Off stops the "Hey Hermes" listener and voice mode and is saved in the assistant\'s config, so it stays off after a restart.'
       }),
+      jsx(PromptBox, {}),
       jsx(MusicSection, {})
     ].filter(Boolean)
   })
@@ -179,7 +239,7 @@ function Chip() {
     setPending(true)
     try {
       const next = await rest('/state', {
-        method: 'POST', body: { listening: !data.listening }, timeoutMs: TOGGLE_TIMEOUT_MS
+        method: 'POST', body: { listening: !data.listening }, timeoutMs: TURN_TIMEOUT_MS
       })
       client.setQueryData(QUERY_KEY, next)
     } catch (err) {
@@ -212,12 +272,12 @@ function Chip() {
 }
 
 // Exported for tests; the app only consumes the default export.
-export { Chip, chipView, Panel, stateLabel, MusicSection, musicLine }
+export { Chip, chipView, Panel, stateLabel, MusicSection, musicLine, PromptBox }
 
 export default {
   id: ID,
   name: 'Voice assistant',
-  description: 'Turn the voice Hermes microphone on and off over ssh, and steer the music player on the same host.',
+  description: 'Turn the voice Hermes microphone on and off over ssh, type a prompt into its session, and steer the music player on the same host.',
   register(ctx) {
     rest = (path, opts) => ctx.rest(path, opts)
 

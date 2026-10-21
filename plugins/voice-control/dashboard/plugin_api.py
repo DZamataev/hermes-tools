@@ -9,6 +9,7 @@ sent over ssh's stdin, so nothing is installed on the assistant host.
     POST /state {"listening": bool} -> /voice on + /wake on, or /wake off + /voice off
     GET  /music                     -> ``music status --json``
     POST /music {"cmd": str, "arg": str} -> one control command, then the fresh status
+    POST /prompt {"text": str}      -> type the text into the CLI's session; it answers aloud
 
 Settings (Settings -> Plugins -> voice-control, ``plugins.entries.voice-control.settings``):
 ``ssh_host`` — a ``~/.ssh/config`` alias or ``user@host``; ``tmux_session`` — the CLI's tmux
@@ -17,6 +18,7 @@ session. The ssh key must work non-interactively (BatchMode): there is nobody to
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import pathlib
@@ -40,6 +42,9 @@ MUSIC_TIMEOUT_S = 15
 # The only commands POST /music may run — remote.sh checks the same list again.
 MUSIC_CMDS = ("pause", "resume", "toggle", "next", "prev", "stop", "volume")
 _VOLUME_RE = re.compile(r"^[+-]?[0-9]{1,3}$")
+# A prompt is typed as one line; longer text is not a spoken question any more.
+PROMPT_MAX = 2000
+_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
 # ssh_host reaches argv: no leading "-" (would be read as an ssh option), no spaces or shell syntax.
 _HOST_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.@:%+-]*$")
 _SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -52,6 +57,7 @@ ERRORS = {
     "bad_settings": "ssh_host / tmux_session in the plugin settings are not valid",
     "bad_reply": "the assistant host answered something unexpected",
     "music_failed": "the player did not accept the command",
+    "bad_prompt": "the prompt was not accepted (one line, no control characters, no leading /)",
 }
 
 
@@ -146,6 +152,40 @@ def run_music(action: str, conf: Dict[str, str], runner=subprocess.run,
     return music_from(got["rc"], got["stdout"], got["stderr"])
 
 
+def prompt_text(raw: Any) -> Optional[str]:
+    """The prompt as it will be typed: one line, no control characters, not a slash command."""
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text or len(text) > PROMPT_MAX:
+        return None
+    text = re.sub(r"[\r\n\t]", " ", text)  # a newline would submit the line early
+    if text.startswith("/") or _CTRL_RE.search(text):
+        return None
+    return text
+
+
+def prompt_from(rc: int, stdout: str, stderr: str) -> Dict[str, Any]:
+    """Normalise one ssh run of ``prompt``: ``sent=true``, or the error remote.sh printed."""
+    if rc == 255:  # ssh's own failure: connect, auth, host key
+        return {"sent": False, "error": "unreachable", "detail": stderr.strip()[-300:]}
+    pairs = _parse(stdout)
+    error = pairs.get("error") or None
+    sent = _flag(pairs.get("sent")) is True and error is None
+    if not sent and error is None:
+        error = "bad_reply"
+    return {"sent": sent, "error": error, "detail": stderr.strip()[-300:] if error == "bad_reply" else ""}
+
+
+def run_prompt(text: str, conf: Dict[str, str], runner=subprocess.run) -> Dict[str, Any]:
+    """Type ``text`` into the CLI's session. It travels base64'd: argv is one shell line."""
+    encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    got = _ssh("prompt", conf, runner, (encoded,))
+    if "rc" not in got:
+        return {"sent": False, **got}
+    return prompt_from(got["rc"], got["stdout"], got["stderr"])
+
+
 def _with_message(payload: Dict[str, Any]) -> Dict[str, Any]:
     error = payload.get("error") or ""
     # a failed music command carries the player's own Russian line in `detail`: that is the reason
@@ -188,4 +228,14 @@ async def set_music(payload: Dict[str, Any] = Body(...)):
     else:
         raise HTTPException(status_code=422, detail=f"{cmd} takes no arg")
     return _with_message(await asyncio.to_thread(run_music, "music", settings(), extra=extra))
+
+
+@router.post("/prompt")
+async def set_prompt(payload: Dict[str, Any] = Body(...)):
+    text = prompt_text(payload.get("text"))
+    if text is None:
+        raise HTTPException(status_code=422,
+                            detail=f'body must be {{"text": "..."}}: one line, 1-{PROMPT_MAX} characters, '
+                                   'no control characters, not starting with "/"')
+    return _with_message(await asyncio.to_thread(run_prompt, text, settings()))
 

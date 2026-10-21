@@ -3,6 +3,7 @@
 #   ssh <host> bash -s -- <status|on|off> <tmux-session>  < remote.sh
 #   ssh <host> bash -s -- music-status <tmux-session>  < remote.sh
 #   ssh <host> bash -s -- music <tmux-session> <cmd> [<arg>]  < remote.sh
+#   ssh <host> bash -s -- prompt <tmux-session> <base64-text>  < remote.sh
 # Drives the Hermes CLI that hermes-voice.service keeps in a tmux session, and
 # prints key=value lines the backend parses. Nothing is installed on the host.
 # music-* actions drive the mpv player in $HOME/.local/bin/music and ignore the
@@ -58,6 +59,20 @@ send() {
   fi
 }
 
+wait_idle() { for _ in $(seq 1 40); do busy || break; sleep 0.5; done; }
+
+# Text for `prompt`, decoded into $decoded. ssh joins its argv into one command line for
+# the remote shell, so the text travels base64'd (never as an argument) and is typed literally.
+decode_prompt() {
+  case ${1:-} in
+    ''|*[!A-Za-z0-9+/=]*) return 1 ;;
+  esac
+  decoded=$(printf '%s' "$1" | base64 -d 2>/dev/null) || return 1
+  # control characters would press keys of their own (a newline submits, an escape moves the
+  # cursor); a leading / would run a slash command, and those belong to the mic switch.
+  [[ -n $decoded && $decoded != /* && ! $decoded =~ [[:cntrl:]] ]]
+}
+
 report() {
   if mic_open; then out listening true; else out listening false; fi
   out wake_enabled "$(wake_enabled)"
@@ -95,8 +110,19 @@ fi
 
 case $action in
   status) ;;
+  prompt)
+    if ! decode_prompt "${3:-}"; then out error bad_prompt; exit 2; fi
+    wait_idle
+    if busy; then
+      out error busy
+      exit 0
+    fi
+    send "$decoded"
+    out sent true
+    exit 0
+    ;;
   on|off)
-    for _ in $(seq 1 40); do busy || break; sleep 0.5; done
+    wait_idle
     if busy; then
       out error busy
       report

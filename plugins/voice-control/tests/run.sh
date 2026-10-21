@@ -21,6 +21,9 @@ status=0
 echo "── remote.sh"
 if bash -n dashboard/remote.sh; then echo "remote.sh: syntax ok"; else status=1; fi
 
+echo "── remote.sh behaviour (stub tmux)"
+python3 tests/test_remote.py || status=1
+
 echo "── backend"
 "$PY" tests/test_backend.py "$HERMES" || status=1
 

@@ -115,6 +115,45 @@ check("music-garbage-is-bad-reply", out["error"] == "bad_reply" and out["state"]
 out = vc.run_music("music-status", {"ssh_host": "host; rm -rf ~", "tmux_session": "voice"}, runner=FakeSsh())
 check("music-bad-settings", out["error"] == "bad_settings" and out["state"] is None, repr(out))
 
+# --- prompt: the text is typed into the CLI, so it must never reach argv raw ---
+import base64  # noqa: E402
+
+PROMPT = "скажи привет"
+ssh = FakeSsh(stdout="sent=true\n")
+out = vc.run_prompt(PROMPT, CONF, runner=ssh)
+argv, kwargs = ssh.calls[0]
+check("prompt-argv", argv[7:] == ["bash", "-s", "--", "prompt", "voice", base64.b64encode(PROMPT.encode()).decode()],
+      repr(argv))
+check("prompt-timeout-is-bounded", kwargs.get("timeout") == vc.TIMEOUT_S, repr(kwargs.get("timeout")))
+check("prompt-text-never-in-argv", not any(PROMPT in arg for arg in argv), repr(argv))
+check("prompt-sent", out["sent"] is True and out["error"] is None, repr(out))
+
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(rc=2, stdout="error=bad_prompt\n"))
+check("prompt-refusal-passes-through", out["sent"] is False and out["error"] == "bad_prompt", repr(out))
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(stdout="error=busy\n"))
+check("prompt-busy-passes-through", out["sent"] is False and out["error"] == "busy", repr(out))
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(stdout="error=no_session\n"))
+check("prompt-no-session", out["error"] == "no_session", repr(out))
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(rc=255, stderr="ssh: connect to host x: Connection refused\n"))
+check("prompt-ssh-failure-is-unreachable", out["sent"] is False and out["error"] == "unreachable"
+      and "Connection refused" in out["detail"], repr(out))
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(raises=subprocess.TimeoutExpired("ssh", 60)))
+check("prompt-timeout-labelled", out["sent"] is False and out["error"] == "timeout", repr(out))
+out = vc.run_prompt(PROMPT, CONF, runner=FakeSsh(stdout="bash: tmux: command not found\n", stderr="oops"))
+check("prompt-garbage-is-bad-reply", out["sent"] is False and out["error"] == "bad_reply", repr(out))
+out = vc.run_prompt(PROMPT, {"ssh_host": "host; rm -rf ~", "tmux_session": "voice"}, runner=FakeSsh())
+check("prompt-bad-settings", out["error"] == "bad_settings" and out["sent"] is False, repr(out))
+
+# The text rules: one line, bounded, no control characters, no slash commands.
+check("prompt-text-stripped", vc.prompt_text("  привет  ") == "привет", repr(vc.prompt_text("  привет  ")))
+check("prompt-newline-becomes-space", vc.prompt_text("первая\nвторая") == "первая вторая",
+      repr(vc.prompt_text("первая\nвторая")))
+check("prompt-cr-and-tab-become-space", vc.prompt_text("a\rb\tc") == "a b c", repr(vc.prompt_text("a\rb\tc")))
+check("prompt-text-limit", vc.prompt_text("я" * vc.PROMPT_MAX) == "я" * vc.PROMPT_MAX
+      and vc.prompt_text("я" * (vc.PROMPT_MAX + 1)) is None)
+for bad in ["", "   ", "\n\n", "/wake off", "  /voice on", "a\x00b", "a\x1bb", "a\x7fb", None, 5, ["a"]]:
+    check(f"prompt-text-refused:{bad!r}", vc.prompt_text(bad) is None, repr(vc.prompt_text(bad)))
+
 # --- the routes: a request body never reaches argv unchanged -------------------
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -167,6 +206,41 @@ try:
           and ssh.calls[0][0][7:] == ["bash", "-s", "--", "music", "voice", "toggle"], repr(ssh.calls))
 finally:
     vc.run_music = real_run_music  # type: ignore[attr-defined]
+
+# --- POST /prompt: the body is checked here and reaches argv only as base64 ----
+prompt_calls: list = []
+real_run_prompt = vc.run_prompt
+
+
+def fake_run_prompt(text, conf, runner=subprocess.run):
+    prompt_calls.append(text)
+    return {"sent": True, "error": None, "detail": ""}
+
+
+vc.run_prompt = fake_run_prompt  # type: ignore[attr-defined]  # the route looks it up by name
+try:
+    for bad in [{"text": ""}, {"text": "   "}, {"text": "я" * (vc.PROMPT_MAX + 1)}, {"text": "/wake off"},
+                {"text": " /voice off"}, {"text": "a\x00b"}, {"text": "a\x1bb"}, {"text": None}, {}, {"text": 5},
+                {"text": ["привет"]}]:
+        prompt_calls.clear()
+        r = client.post("/prompt", json=bad)
+        check(f"prompt-route-rejects:{bad!r}", r.status_code == 422 and not prompt_calls, r.text)
+    r = client.post("/prompt", json={"text": "  первая\nвторая  "})
+    check("prompt-route-normalises", r.status_code == 200 and prompt_calls[-1] == "первая вторая", repr(prompt_calls))
+    check("prompt-route-reports-sent", r.json().get("sent") is True and r.json().get("error") is None, r.text)
+
+    vc.run_prompt = lambda text, conf, runner=subprocess.run: {"sent": False, "error": "busy", "detail": ""}  # type: ignore[attr-defined]
+    r = client.post("/prompt", json={"text": "привет"})
+    check("prompt-route-busy-message", r.json().get("message") == vc.ERRORS["busy"], r.text)
+
+    # A fake run_prompt cannot show the encoding: run the route through the real one with ssh faked.
+    ssh = FakeSsh(stdout="sent=true\n")
+    vc.run_prompt = lambda text, conf, runner=subprocess.run: real_run_prompt(text, conf, runner=ssh)  # type: ignore[attr-defined]
+    check("prompt-route-text-reaches-argv-encoded", client.post("/prompt", json={"text": PROMPT}).status_code == 200
+          and ssh.calls[0][0][7:] == ["bash", "-s", "--", "prompt", "voice",
+                                      base64.b64encode(PROMPT.encode()).decode()], repr(ssh.calls))
+finally:
+    vc.run_prompt = real_run_prompt  # type: ignore[attr-defined]
 
 # --- settings are a trust boundary: they reach argv ------------------------
 for host in ["-oProxyCommand=touch /tmp/pwned", "host; rm -rf ~", "a b", "", "$(id)"]:
