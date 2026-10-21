@@ -192,7 +192,12 @@ function PromptBox() {
         ]
       }),
       draft.status
-        ? jsx('div', { className: draft.status.error ? 'vc-error' : 'vc-row', children: draft.status.message })
+        ? jsx('div', {
+          role: 'status',
+          'aria-live': 'polite',
+          className: draft.status.error ? 'vc-error' : 'vc-row',
+          children: draft.status.message
+        })
         : null
     ].filter(Boolean)
   })

@@ -247,6 +247,15 @@ check('prompt-says-it-was-sent', !sentDraft?.status?.error && sentDraft?.status?
   JSON.stringify(sentDraft?.status))
 r = collect({ t: PromptBox, p: {} })
 check('prompt-renders-the-status', r.text.some(t => t.includes('Отправлено')), r.text.join('|'))
+// Screen readers only hear it if the line is a live region.
+const liveStatus = (function find(n) {
+  if (!n || typeof n !== 'object') return null
+  if (n.p?.role === 'status' && n.p?.['aria-live'] === 'polite') return [].concat(n.p.children ?? []).join('')
+  for (const c of [].concat(n.p?.children ?? [])) { const f = find(c); if (f) return f }
+  return null
+})(PromptBox({}))
+check('prompt-status-is-a-live-region', typeof liveStatus === 'string' && liveStatus.includes('Отправлено'),
+  JSON.stringify(liveStatus))
 
 calls.length = 0
 globalThis.__probeReply = { sent: true, error: null }

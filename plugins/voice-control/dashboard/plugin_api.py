@@ -57,7 +57,7 @@ ERRORS = {
     "bad_settings": "ssh_host / tmux_session in the plugin settings are not valid",
     "bad_reply": "the assistant host answered something unexpected",
     "music_failed": "the player did not accept the command",
-    "bad_prompt": "the prompt was not accepted (one line, no control characters, no leading /)",
+    "bad_prompt": "the prompt was not accepted (one line, no control characters, no leading / or !)",
 }
 
 
@@ -153,14 +153,15 @@ def run_music(action: str, conf: Dict[str, str], runner=subprocess.run,
 
 
 def prompt_text(raw: Any) -> Optional[str]:
-    """The prompt as it will be typed: one line, no control characters, not a slash command."""
+    """The prompt as it will be typed: one line, no control characters, not a command."""
     if not isinstance(raw, str):
         return None
     text = raw.strip()
     if not text or len(text) > PROMPT_MAX:
         return None
     text = re.sub(r"[\r\n\t]", " ", text)  # a newline would submit the line early
-    if text.startswith("/") or _CTRL_RE.search(text):
+    # "/" is a slash command and "!" a shell command in the assistant's CLI — neither is a prompt.
+    if text.startswith(("/", "!")) or _CTRL_RE.search(text):
         return None
     return text
 
@@ -236,6 +237,6 @@ async def set_prompt(payload: Dict[str, Any] = Body(...)):
     if text is None:
         raise HTTPException(status_code=422,
                             detail=f'body must be {{"text": "..."}}: one line, 1-{PROMPT_MAX} characters, '
-                                   'no control characters, not starting with "/"')
+                                   'no control characters, not starting with "/" or "!"')
     return _with_message(await asyncio.to_thread(run_prompt, text, settings()))
 

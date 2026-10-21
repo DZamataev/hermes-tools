@@ -40,11 +40,13 @@ Remote-side it is `ssh <ssh_host> bash -s -- prompt <tmux_session> <base64>`; th
 - **The text** is stripped, must be 1–2000 characters, and may not contain control characters.
   Newlines, CRs and tabs become spaces: a newline would submit the line before the rest of the text
   arrives.
-- **Text starting with `/` is refused**, by the backend and again by `remote.sh`: a slash command
-  would run instead of a prompt, and those belong to the microphone switch.
+- **Text starting with `/` or `!` is refused**, by the backend and again by `remote.sh` (after any
+  leading whitespace): a slash command would run instead of a prompt, and a leading `!` runs a shell
+  command in the assistant's own CLI. Those belong to the microphone switch, not to this field.
 - **Injection safety.** ssh joins its argv into one command line for the remote shell, so the text
   never travels as an argument: the backend sends base64, `remote.sh` checks the base64 charset
-  again, decodes it and types the result with `tmux send-keys -l` (literal — no key names, no shell).
+  again, decodes it and types the result with `tmux send-keys -l --` (literal — no key names, no
+  shell, and `--` keeps text that starts with `-` from being read as tmux's own flags).
 - **A running turn is never typed into** — the same 20 s wait as the microphone switch, then
   `busy`. The field keeps the text when the send failed, so it is not lost.
 

@@ -151,7 +151,7 @@ check("prompt-newline-becomes-space", vc.prompt_text("первая\nвторая
 check("prompt-cr-and-tab-become-space", vc.prompt_text("a\rb\tc") == "a b c", repr(vc.prompt_text("a\rb\tc")))
 check("prompt-text-limit", vc.prompt_text("я" * vc.PROMPT_MAX) == "я" * vc.PROMPT_MAX
       and vc.prompt_text("я" * (vc.PROMPT_MAX + 1)) is None)
-for bad in ["", "   ", "\n\n", "/wake off", "  /voice on", "a\x00b", "a\x1bb", "a\x7fb", None, 5, ["a"]]:
+for bad in ["", "   ", "\n\n", "/wake off", "  /voice on", "!ls", "  !ls", "a\x00b", "a\x1bb", "a\x7fb", None, 5, ["a"]]:
     check(f"prompt-text-refused:{bad!r}", vc.prompt_text(bad) is None, repr(vc.prompt_text(bad)))
 
 # --- the routes: a request body never reaches argv unchanged -------------------
@@ -220,8 +220,8 @@ def fake_run_prompt(text, conf, runner=subprocess.run):
 vc.run_prompt = fake_run_prompt  # type: ignore[attr-defined]  # the route looks it up by name
 try:
     for bad in [{"text": ""}, {"text": "   "}, {"text": "я" * (vc.PROMPT_MAX + 1)}, {"text": "/wake off"},
-                {"text": " /voice off"}, {"text": "a\x00b"}, {"text": "a\x1bb"}, {"text": None}, {}, {"text": 5},
-                {"text": ["привет"]}]:
+                {"text": " /voice off"}, {"text": "!ls"}, {"text": " !ls"}, {"text": "a\x00b"}, {"text": "a\x1bb"},
+                {"text": None}, {}, {"text": 5}, {"text": ["привет"]}]:
         prompt_calls.clear()
         r = client.post("/prompt", json=bad)
         check(f"prompt-route-rejects:{bad!r}", r.status_code == 422 and not prompt_calls, r.text)

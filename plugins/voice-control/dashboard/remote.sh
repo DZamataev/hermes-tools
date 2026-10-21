@@ -47,13 +47,15 @@ busy() { prompt_line | grep -qE '❯ msg=(interrupt|queue|steer)'; }
 send() {
   local cmd=$1
   tmux send-keys -t "$session" C-e C-u          # drop anything half-typed in the input
-  tmux send-keys -t "$session" -l "$cmd"
+  # `--` ends the options: without it tmux reads text starting with "-" as its own flags.
+  tmux send-keys -t "$session" -l -- "$cmd"
   # Keys typed in one burst read as a paste: Enter right after the text stays in the input.
   sleep 0.4
   tmux send-keys -t "$session" Enter
   sleep 0.8
-  # The slash-completion menu takes the first Enter.
-  if prompt_line | grep -qF -- "$cmd"; then
+  # The slash-completion menu takes the first Enter. A long text wraps, so the first visual
+  # line carries only its beginning: the leftover is spotted from a prefix, not the whole text.
+  if prompt_line | grep -qF -- "${cmd:0:24}"; then
     tmux send-keys -t "$session" Enter
     sleep 0.8
   fi
@@ -69,8 +71,9 @@ decode_prompt() {
   esac
   decoded=$(printf '%s' "$1" | base64 -d 2>/dev/null) || return 1
   # control characters would press keys of their own (a newline submits, an escape moves the
-  # cursor); a leading / would run a slash command, and those belong to the mic switch.
-  [[ -n $decoded && $decoded != /* && ! $decoded =~ [[:cntrl:]] ]]
+  # cursor); a leading / or ! runs a slash command or a shell command in the CLI, and those
+  # belong to the mic switch, not to a prompt.
+  [[ -n $decoded && ! $decoded =~ ^[[:space:]]*[/!] && ! $decoded =~ [[:cntrl:]] ]]
 }
 
 report() {
