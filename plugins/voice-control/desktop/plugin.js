@@ -104,7 +104,8 @@ function MusicSection() {
     setPending(true)
     try {
       const next = await rest('/music', { method: 'POST', body: { cmd, arg }, timeoutMs: MUSIC_TIMEOUT_MS })
-      client.setQueryData(MUSIC_KEY, next)
+      // A failed command answers with no state: keep the last good one, add the error.
+      client.setQueryData(MUSIC_KEY, next?.state ? next : { ...data, error: next?.error, message: next?.message })
     } catch (err) {
       client.setQueryData(MUSIC_KEY, { ...data, error: 'request_failed', message: String(err?.message || err) })
     } finally {

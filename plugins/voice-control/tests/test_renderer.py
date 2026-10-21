@@ -187,6 +187,29 @@ check('music-volume-down-posts', c[1].body.arg === '-10', JSON.stringify(c[1].bo
 check('music-stores-the-fresh-status', globalThis.__probeSet?.at(-1)?.state === 'playing', JSON.stringify(globalThis.__probeSet))
 check('music-clears-pending', globalThis.__probePending === false)
 
+// --- a failed command must not wipe the status it already knows ---------------
+globalThis.__probeQuery = { data: PLAYING, error: null }
+globalThis.__probeReply = { state: null, error: 'timeout', message: 'the assistant host did not answer in time' }
+r = collect({ t: MusicSection, p: {} })
+await press('⏯')
+const failed = globalThis.__probeSet?.at(-1)
+check('music-failure-keeps-last-status', failed?.state === 'playing', JSON.stringify(failed))
+check('music-failure-attaches-the-error', failed?.error === 'timeout'
+  && failed?.message === 'the assistant host did not answer in time', JSON.stringify(failed))
+globalThis.__probeQuery = { data: failed, error: null }
+globalThis.__probePending = false
+r = collect({ t: MusicSection, p: {} })
+check('music-failure-keeps-the-now-playing-line', r.text.includes('Кино — Группа крови'), r.text.join('|'))
+check('music-failure-keeps-controls-enabled', r.buttons.length === 5 && r.buttons.every(b => b.disabled === false),
+  JSON.stringify(r.buttons.map(b => b.disabled)))
+const errorBox = (function find(n) {
+  if (!n || typeof n !== 'object') return null
+  if (n.p?.className === 'vc-error') return [].concat(n.p.children ?? []).join('')
+  for (const c of [].concat(n.p?.children ?? [])) { const f = find(c); if (f) return f }
+  return null
+})(MusicSection({}))
+check('music-failure-shows-the-error-in-red', errorBox === 'the assistant host did not answer in time', JSON.stringify(errorBox))
+
 if (failures.length) {
   console.log(`renderer: ${failures.length} of ${checks} checks FAILED`)
   for (const f of failures) console.log('  ✗', f)
