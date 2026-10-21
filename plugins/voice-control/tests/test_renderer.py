@@ -54,12 +54,16 @@ globalThis.document = {
   head: { append() {} }
 }
 const plugin = (await import('./plugin.js')).default
-const { Chip, chipView, Panel, stateLabel } = await import('./plugin.js')
+const { Chip, chipView, Panel, stateLabel, MusicSection, musicLine } = await import('./plugin.js')
 
 const calls = []
 const registered = []
+const OFF_REPLY = { host: 'ct125-voice', listening: false, wake_enabled: false, error: null }
 plugin.register({
-  rest: async (path, opts) => { calls.push([path, opts]); return { host: 'ct125-voice', listening: false, wake_enabled: false, error: null } },
+  rest: async (path, opts) => {
+    calls.push([path, opts])
+    return globalThis.__probeReply ?? (path === '/music' ? { state: 'stopped', volume: 15 } : OFF_REPLY)
+  },
   onDispose: () => {},
   register: c => registered.push(c)
 })
@@ -92,19 +96,21 @@ check('chip-title-names-host', chipView(ON, null, false).title.includes('ct125-v
 check('state-labels', [stateLabel(ON), stateLabel(OFF), stateLabel(unreachable), stateLabel(null)].join('|') === 'listening|microphone off|unknown|unknown')
 
 // --- popover ----------------------------------------------------------------
+const byLabel = (buttons, label) => buttons.find(b => b['aria-label'] === label || b.children === label)
 let r = collect({ t: Panel, p: { data: ON, error: null, pending: false, onToggle: () => {} } })
-const toggle = r.buttons.at(-1)
 check('panel-shows-host', r.text.includes('ct125-voice'), r.text.join('|'))
-check('panel-on-offers-off', toggle?.children === 'Turn microphone off' && toggle.disabled === false, JSON.stringify(toggle))
+check('panel-on-offers-off', byLabel(r.buttons, 'Turn microphone off')?.disabled === false,
+  JSON.stringify(r.buttons.map(b => b.children)))
 r = collect({ t: Panel, p: { data: OFF, error: null, pending: false, onToggle: () => {} } })
-check('panel-off-offers-on', r.buttons.at(-1)?.children === 'Turn microphone on')
+check('panel-off-offers-on', !!byLabel(r.buttons, 'Turn microphone on'))
 r = collect({ t: Panel, p: { data: unreachable, error: null, pending: false, onToggle: () => {} } })
-check('panel-unknown-disables-toggle', r.buttons.at(-1)?.disabled === true)
+check('panel-unknown-disables-toggle', byLabel(r.buttons, 'Turn microphone on')?.disabled === true)
 check('panel-shows-error-message', r.text.includes('ssh to the assistant host failed'), r.text.join('|'))
 r = collect({ t: Panel, p: { data: ON, error: null, pending: true, onToggle: () => {} } })
-check('panel-pending-disables-toggle', r.buttons.at(-1)?.disabled === true && r.text.includes('switching…'))
+check('panel-pending-disables-toggle', byLabel(r.buttons, 'Turn microphone off')?.disabled === true && r.text.includes('switching…'))
 r = collect({ t: Panel, p: { data: undefined, error: new Error('404'), pending: false, onToggle: () => {} } })
 check('panel-backend-down-says-how-to-fix', r.text.some(t => t.includes('hermes plugins enable voice-control')))
+check('panel-carries-the-music-block', r.text.includes('Музыка'), r.text.join('|'))
 
 // --- the toggle posts the opposite state and stores the answer -----------------
 globalThis.__probeQuery = { data: ON, error: null }
@@ -122,6 +128,64 @@ check('toggle-posts-opposite', calls.length === 1 && calls[0][0] === '/state' &&
 check('toggle-allows-a-long-request', calls[0][1].timeoutMs >= 60000)
 check('toggle-stores-reply', globalThis.__probeSet?.at(-1)?.listening === false, JSON.stringify(globalThis.__probeSet))
 check('toggle-clears-pending', globalThis.__probePending === false)
+
+// --- the music block: each state, then one click per button -------------------
+const PLAYING = { state: 'playing', kind: 'jellyfin', artist: 'Кино', title: 'Группа крови', station: '', icy_title: '',
+  pos: 2, count: 9, volume: 40, error: null }
+const RADIO = { state: 'playing', kind: 'radio', artist: '', title: 'Наше радио', station: 'Наше радио',
+  icy_title: 'Dua Lipa — Levitating', pos: 1, count: 1, volume: 25, error: null }
+const STOPPED = { state: 'stopped', kind: null, artist: '', title: '', station: '', icy_title: '',
+  pos: 0, count: 0, volume: 15, error: null }
+
+check('music-line-jellyfin', musicLine(PLAYING) === 'Кино — Группа крови', musicLine(PLAYING))
+check('music-line-radio', musicLine(RADIO) === 'Наше радио · Dua Lipa — Levitating', musicLine(RADIO))
+check('music-line-radio-without-icy', musicLine({ ...RADIO, icy_title: '' }) === 'Наше радио', musicLine({ ...RADIO, icy_title: '' }))
+check('music-line-stopped', musicLine(STOPPED) === 'ничего не играет', musicLine(STOPPED))
+check('music-line-paused-marks-it', musicLine({ ...PLAYING, state: 'paused' }) === '⏸ Кино — Группа крови')
+check('music-line-unknown', musicLine(null) === '—' && musicLine({ state: null }) === '—')
+
+globalThis.__probeQuery = { data: PLAYING, error: null }
+globalThis.__probePending = false
+r = collect({ t: MusicSection, p: {} })
+check('music-section-now-playing', r.text.includes('Кино — Группа крови'), r.text.join('|'))
+check('music-section-shows-volume', r.text.includes('40'))
+check('music-section-controls', ['⏯', '⏭', '⏹', '−', '+'].every(g => byLabel(r.buttons, g)),
+  JSON.stringify(r.buttons.map(b => b.children)))
+check('music-playing-enables-controls', r.buttons.length === 5 && r.buttons.every(b => b.disabled === false))
+
+globalThis.__probeQuery = { data: STOPPED, error: null }
+r = collect({ t: MusicSection, p: {} })
+check('music-stopped-says-so', r.text.includes('ничего не играет'), r.text.join('|'))
+check('music-stopped-disables-controls', r.buttons.length === 5 && r.buttons.every(b => b.disabled === true))
+
+globalThis.__probeQuery = { data: PLAYING, error: null }
+globalThis.__probePending = true
+r = collect({ t: MusicSection, p: {} })
+check('music-pending-disables-controls', r.text.includes('…') && r.buttons.every(b => b.disabled === true))
+
+globalThis.__probeQuery = { data: { state: null, error: 'unreachable', message: 'ssh to the assistant host failed' }, error: null }
+globalThis.__probePending = false
+r = collect({ t: MusicSection, p: {} })
+check('music-shows-error-message', r.text.includes('ssh to the assistant host failed'), r.text.join('|'))
+check('music-unknown-disables-controls', r.buttons.every(b => b.disabled === true))
+
+globalThis.__probeQuery = { data: PLAYING, error: null }
+globalThis.__probeReply = PLAYING
+r = collect({ t: MusicSection, p: {} })
+const press = async glyph => { calls.length = 0; await byLabel(r.buttons, glyph).onClick(); return calls.at(-1) }
+let c = await press('⏯')
+check('music-toggle-posts', c[0] === '/music' && c[1].method === 'POST' && c[1].body.cmd === 'toggle', JSON.stringify(c))
+check('music-toggle-allows-the-backend-timeout', c[1].timeoutMs >= 15000)
+c = await press('⏭')
+check('music-next-posts', c[1].body.cmd === 'next', JSON.stringify(c[1].body))
+c = await press('⏹')
+check('music-stop-posts', c[1].body.cmd === 'stop', JSON.stringify(c[1].body))
+c = await press('+')
+check('music-volume-up-posts', c[1].body.cmd === 'volume' && c[1].body.arg === '+10', JSON.stringify(c[1].body))
+c = await press('−')
+check('music-volume-down-posts', c[1].body.arg === '-10', JSON.stringify(c[1].body))
+check('music-stores-the-fresh-status', globalThis.__probeSet?.at(-1)?.state === 'playing', JSON.stringify(globalThis.__probeSet))
+check('music-clears-pending', globalThis.__probePending === false)
 
 if (failures.length) {
   console.log(`renderer: ${failures.length} of ${checks} checks FAILED`)

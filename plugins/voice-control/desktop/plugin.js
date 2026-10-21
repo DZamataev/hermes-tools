@@ -1,8 +1,10 @@
-// Voice assistant — the microphone switch of a headless voice Hermes, in the status bar.
+// Voice assistant — the microphone switch of a headless voice Hermes, in the status bar,
+// and a music block (the player on the same host) inside its popover.
 //
 // The chip shows whether the assistant is listening (🎙), switched off (🔇) or
 // unknown (—, host unreachable or backend off). Tapping it opens a popover with
-// the host, the state and the one button that flips it.
+// the host, the state and the one button that flips it, then what is playing and
+// the pause / next / stop / volume controls.
 //
 // All work goes through this package's Python half
 // (`~/.hermes/plugins/voice-control/dashboard/plugin_api.py`) via `ctx.rest`; it
@@ -17,6 +19,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const ID = 'voice-control'
 const QUERY_KEY = [ID, 'state']
+const MUSIC_KEY = [ID, 'music']
 // Captured in `register`: components render in the app's tree, outside its closure.
 let rest = async () => { throw new Error('plugin not registered') }
 let styleElement = null
@@ -24,6 +27,10 @@ let styleElement = null
 const REFETCH_MS = 30_000
 // The backend may wait up to 20 s for a running turn before giving up.
 const TOGGLE_TIMEOUT_MS = 75_000
+// The backend gives a music call 15 s.
+const MUSIC_TIMEOUT_MS = 20_000
+// Volume buttons move mpv by this much, like `music volume +10`.
+const VOLUME_STEP = 10
 
 const CSS = `
 .vc-chip{display:inline-flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}
@@ -34,6 +41,11 @@ const CSS = `
 .vc-row>b{color:var(--ui-text-primary,inherit);font-weight:500}
 .vc-error{color:var(--dt-destructive);line-height:1.35}
 .vc-note{font-size:.62rem;line-height:1.4;color:var(--ui-text-quaternary);padding-top:6px;border-top:1px solid var(--ui-stroke-quaternary)}
+.vc-music{display:flex;flex-direction:column;gap:6px;padding-top:8px;border-top:1px solid var(--ui-stroke-quaternary)}
+.vc-now{line-height:1.35}
+.vc-controls{display:flex;align-items:center;gap:2px}
+.vc-spacer{flex:1}
+.vc-volume{min-width:2em;text-align:center;font-variant-numeric:tabular-nums}
 `
 
 /** What the chip draws for one moment: the query result, its error, a toggle in flight. */
@@ -65,6 +77,67 @@ function useVoiceState() {
   })
 }
 
+/** What the player says it is doing, as one line. */
+function musicLine(data) {
+  if (!data || !data.state) return '—'
+  if (data.state === 'stopped') return 'ничего не играет'
+  const name = data.kind === 'radio'
+    ? [data.station, data.icy_title].filter(Boolean).join(' · ')
+    : [data.artist, data.title].filter(Boolean).join(' — ')
+  return (data.state === 'paused' ? '⏸ ' : '') + (name || '—')
+}
+
+/**
+ * The music block: one status line and the transport buttons. Mounted with the popover,
+ * so the status is fetched on open; afterwards the POST reply is the fresh status, and
+ * there is no polling.
+ */
+function MusicSection() {
+  const client = useQueryClient()
+  const { data } = useQuery({ queryKey: MUSIC_KEY, queryFn: () => rest('/music'), retry: false })
+  const [pending, setPending] = useState(false)
+  // Nothing to drive when the player is not playing (or has not answered yet).
+  const off = pending || !data || !data.state || data.state === 'stopped'
+
+  const act = async (cmd, arg) => {
+    if (off) return
+    setPending(true)
+    try {
+      const next = await rest('/music', { method: 'POST', body: { cmd, arg }, timeoutMs: MUSIC_TIMEOUT_MS })
+      client.setQueryData(MUSIC_KEY, next)
+    } catch (err) {
+      client.setQueryData(MUSIC_KEY, { ...data, error: 'request_failed', message: String(err?.message || err) })
+    } finally {
+      setPending(false)
+    }
+  }
+
+  const button = (label, glyph, onClick, disabled = off) => jsx(Button, {
+    size: 'micro', variant: 'ghost', disabled, 'aria-label': label, title: label, onClick, children: glyph
+  })
+
+  return jsxs('div', {
+    className: 'vc-music',
+    children: [
+      jsx('div', { className: 'vc-title', children: 'Музыка' }),
+      jsx('div', { className: 'vc-now', children: pending ? '…' : musicLine(data) }),
+      data?.error ? jsx('div', { className: 'vc-error', children: data.message || data.error }) : null,
+      jsxs('div', {
+        className: 'vc-controls',
+        children: [
+          button('Пауза или продолжить', '⏯', () => act('toggle')),
+          button('Следующий трек', '⏭', () => act('next')),
+          button('Стоп', '⏹', () => act('stop')),
+          jsx('span', { className: 'vc-spacer' }),
+          button('Тише', '−', () => act('volume', `-${VOLUME_STEP}`)),
+          jsx('span', { className: 'vc-volume', children: String(data?.volume ?? '—') }),
+          button('Громче', '+', () => act('volume', `+${VOLUME_STEP}`))
+        ]
+      })
+    ].filter(Boolean)
+  })
+}
+
 function Panel({ data, error, pending, onToggle }) {
   const known = data && typeof data.listening === 'boolean'
   return jsxs('div', {
@@ -88,7 +161,8 @@ function Panel({ data, error, pending, onToggle }) {
       jsx('div', {
         className: 'vc-note',
         children: 'Off stops the "Hey Hermes" listener and voice mode and is saved in the assistant\'s config, so it stays off after a restart.'
-      })
+      }),
+      jsx(MusicSection, {})
     ].filter(Boolean)
   })
 }
@@ -137,12 +211,12 @@ function Chip() {
 }
 
 // Exported for tests; the app only consumes the default export.
-export { Chip, chipView, Panel, stateLabel }
+export { Chip, chipView, Panel, stateLabel, MusicSection, musicLine }
 
 export default {
   id: ID,
   name: 'Voice assistant',
-  description: 'Turn the voice Hermes microphone on and off over ssh.',
+  description: 'Turn the voice Hermes microphone on and off over ssh, and steer the music player on the same host.',
   register(ctx) {
     rest = (path, opts) => ctx.rest(path, opts)
 

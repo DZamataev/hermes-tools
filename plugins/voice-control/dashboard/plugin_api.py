@@ -1,11 +1,14 @@
 """voice-control — backend routes, mounted at /api/plugins/voice-control/.
 
 Turns the microphone of a headless voice Hermes (a Hermes CLI that a service keeps in a
-tmux session on another host) on and off over ssh. The work happens in ``remote.sh``,
+tmux session on another host) on and off over ssh, and drives the music player
+(``$HOME/.local/bin/music``, mpv) on the same host. The work happens in ``remote.sh``,
 sent over ssh's stdin, so nothing is installed on the assistant host.
 
     GET  /state                     -> where the assistant is and whether it is listening
     POST /state {"listening": bool} -> /voice on + /wake on, or /wake off + /voice off
+    GET  /music                     -> ``music status --json``
+    POST /music {"cmd": str, "arg": str} -> one control command, then the fresh status
 
 Settings (Settings -> Plugins -> voice-control, ``plugins.entries.voice-control.settings``):
 ``ssh_host`` — a ``~/.ssh/config`` alias or ``user@host``; ``tmux_session`` — the CLI's tmux
@@ -14,11 +17,12 @@ session. The ssh key must work non-interactively (BatchMode): there is nobody to
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pathlib
 import re
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, Body, HTTPException
 
@@ -31,6 +35,11 @@ DEFAULTS = {"ssh_host": "ct125-voice", "tmux_session": "voice"}
 REMOTE_SCRIPT = pathlib.Path(__file__).with_name("remote.sh")
 # remote.sh waits up to 20 s for a running turn to finish, then ~5 s of keystrokes and checks.
 TIMEOUT_S = 60
+# The player answers at once; only ssh (ConnectTimeout=10) is slow.
+MUSIC_TIMEOUT_S = 15
+# The only commands POST /music may run — remote.sh checks the same list again.
+MUSIC_CMDS = ("pause", "resume", "toggle", "next", "prev", "stop", "volume")
+_VOLUME_RE = re.compile(r"^[+-]?[0-9]{1,3}$")
 # ssh_host reaches argv: no leading "-" (would be read as an ssh option), no spaces or shell syntax.
 _HOST_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.@:%+-]*$")
 _SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -42,6 +51,7 @@ ERRORS = {
     "timeout": "the assistant host did not answer in time",
     "bad_settings": "ssh_host / tmux_session in the plugin settings are not valid",
     "bad_reply": "the assistant host answered something unexpected",
+    "music_failed": "the player did not accept the command",
 }
 
 
@@ -84,22 +94,56 @@ def state_from(rc: int, stdout: str, stderr: str) -> Dict[str, Any]:
             "detail": stderr.strip()[-300:] if error == "bad_reply" else ""}
 
 
-def run_remote(action: str, conf: Dict[str, str], runner=subprocess.run) -> Dict[str, Any]:
-    """Run remote.sh with ``action`` on the configured host. ``runner`` is subprocess.run (tests swap it)."""
+def _ssh(action: str, conf: Dict[str, str], runner, extra: Tuple[str, ...] = (),
+         timeout: int = TIMEOUT_S) -> Dict[str, Any]:
+    """One ssh run of remote.sh. ``{"rc","stdout","stderr"}``, or a labelled ``{"error","detail"}``."""
     host, session = conf["ssh_host"], conf["tmux_session"]
-    base = {"host": host, "session": session}
     if not _HOST_RE.match(host) or not _SESSION_RE.match(session):
-        return {**base, "listening": None, "wake_enabled": None, "error": "bad_settings", "detail": ""}
+        return {"error": "bad_settings", "detail": ""}
     argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host,
-            "bash", "-s", "--", action, session]
+            "bash", "-s", "--", action, session, *extra]
     try:
         done = runner(argv, input=REMOTE_SCRIPT.read_text(encoding="utf-8"), capture_output=True,
-                      text=True, timeout=TIMEOUT_S)
+                      text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
-        return {**base, "listening": None, "wake_enabled": None, "error": "timeout", "detail": ""}
+        return {"error": "timeout", "detail": ""}
     except OSError as exc:  # no ssh binary
-        return {**base, "listening": None, "wake_enabled": None, "error": "unreachable", "detail": str(exc)}
-    return {**base, **state_from(done.returncode, done.stdout or "", done.stderr or "")}
+        return {"error": "unreachable", "detail": str(exc)}
+    return {"rc": done.returncode, "stdout": done.stdout or "", "stderr": done.stderr or ""}
+
+
+def run_remote(action: str, conf: Dict[str, str], runner=subprocess.run) -> Dict[str, Any]:
+    """Run remote.sh with ``action`` on the configured host. ``runner`` is subprocess.run (tests swap it)."""
+    base = {"host": conf["ssh_host"], "session": conf["tmux_session"]}
+    got = _ssh(action, conf, runner)
+    if "rc" not in got:
+        return {**base, "listening": None, "wake_enabled": None, **got}
+    return {**base, **state_from(got["rc"], got["stdout"], got["stderr"])}
+
+
+def music_from(rc: int, stdout: str, stderr: str) -> Dict[str, Any]:
+    """Normalise one ssh run of the music half: its last stdout line is the status JSON."""
+    if rc == 255:  # ssh's own failure: connect, auth, host key
+        return {"state": None, "error": "unreachable", "detail": stderr.strip()[-300:]}
+    last = (stdout.strip().splitlines() or [""])[-1]
+    try:
+        status = json.loads(last)
+    except ValueError:
+        status = None
+    if not isinstance(status, dict) or "state" not in status:
+        # A refused command prints one Russian line (its own message or remote.sh's error=...).
+        return {"state": None, "error": "music_failed" if rc else "bad_reply",
+                "detail": (last or stderr.strip())[-300:]}
+    return {**status, "error": None, "detail": ""}
+
+
+def run_music(action: str, conf: Dict[str, str], runner=subprocess.run,
+              extra: Tuple[str, ...] = ()) -> Dict[str, Any]:
+    """Run remote.sh's music half: ``music-status``, or ``music`` with ``extra`` = (cmd, [arg])."""
+    got = _ssh(action, conf, runner, extra, MUSIC_TIMEOUT_S)
+    if "rc" not in got:
+        return {"state": None, **got}
+    return music_from(got["rc"], got["stdout"], got["stderr"])
 
 
 def _with_message(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,3 +162,25 @@ async def set_state(payload: Dict[str, Any] = Body(...)):
     if not isinstance(listening, bool):
         raise HTTPException(status_code=422, detail='body must be {"listening": true|false}')
     return _with_message(await asyncio.to_thread(run_remote, "on" if listening else "off", settings()))
+
+
+@router.get("/music")
+async def get_music():
+    return _with_message(await asyncio.to_thread(run_music, "music-status", settings()))
+
+
+@router.post("/music")
+async def set_music(payload: Dict[str, Any] = Body(...)):
+    cmd, arg = payload.get("cmd"), payload.get("arg")
+    if cmd not in MUSIC_CMDS:
+        raise HTTPException(status_code=422, detail=f"cmd must be one of: {', '.join(MUSIC_CMDS)}")
+    if cmd == "volume":
+        if not _VOLUME_RE.match(str(arg)):
+            raise HTTPException(status_code=422, detail='volume takes {"arg": "N|+N|-N"}, 0-100')
+        extra: Tuple[str, ...] = (cmd, str(arg))
+    elif arg is None:
+        extra = (cmd,)
+    else:
+        raise HTTPException(status_code=422, detail=f"{cmd} takes no arg")
+    return _with_message(await asyncio.to_thread(run_music, "music", settings(), extra=extra))
+

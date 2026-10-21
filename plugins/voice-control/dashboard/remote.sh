@@ -1,8 +1,12 @@
 #!/bin/bash
 # voice-control, remote half. Runs ON the assistant host, fed over ssh:
 #   ssh <host> bash -s -- <status|on|off> <tmux-session>  < remote.sh
+#   ssh <host> bash -s -- music-status <tmux-session>  < remote.sh
+#   ssh <host> bash -s -- music <tmux-session> <cmd> [<arg>]  < remote.sh
 # Drives the Hermes CLI that hermes-voice.service keeps in a tmux session, and
 # prints key=value lines the backend parses. Nothing is installed on the host.
+# music-* actions drive the mpv player in $HOME/.local/bin/music and ignore the
+# tmux session: the player lives outside it and outside the CLI's turns.
 #
 # "Listening" is read from the kernel, not from what the CLI prints: it is true
 # while the CLI's process tree holds an ALSA capture device (/dev/snd/pcmC*D*c)
@@ -58,6 +62,30 @@ report() {
   if mic_open; then out listening true; else out listening false; fi
   out wake_enabled "$(wake_enabled)"
 }
+
+# --- music: mpv on this host over its own socket, so no tmux session and no
+# busy-prompt wait. Last stdout line is always `music status --json`; commands
+# print their own one-liner before it.
+music_bin=$HOME/.local/bin/music
+
+music_run() {
+  local cmd=$1 arg=${2:-}
+  case $cmd in
+    pause|resume|toggle|next|prev|stop) [ -z "$arg" ] || { out error bad_music_arg; return 2; } ;;
+    volume) [[ $arg =~ ^[+-]?[0-9]{1,3}$ ]] || { out error bad_music_arg; return 2; } ;;
+    *) out error bad_music; return 2 ;;
+  esac
+  "$music_bin" "$cmd" ${arg:+"$arg"}
+}
+
+case $action in
+  music-status) "$music_bin" status --json; exit $? ;;
+  music)
+    music_run "${3:-}" "${4:-}" || exit $?
+    "$music_bin" status --json
+    exit 0
+    ;;
+esac
 
 if ! tmux has-session -t "$session" 2>/dev/null; then
   out error no_session

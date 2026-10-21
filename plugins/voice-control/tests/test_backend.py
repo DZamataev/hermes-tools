@@ -82,6 +82,79 @@ check("busy-passes-through-with-state", out["error"] == "busy" and out["listenin
 out = vc.run_remote("status", CONF, runner=FakeSsh(rc=0, stdout="bash: tmux: command not found\n", stderr="oops"))
 check("garbage-is-bad-reply", out["error"] == "bad_reply" and out["listening"] is None, repr(out))
 
+# --- music: the same ssh transport, a JSON line instead of key=value ----------
+STATUS = ('ничего не играет\n{"state": "stopped", "kind": null, "title": "", "artist": "", "station": "", '
+          '"icy_title": "", "pos": 0, "count": 0, "volume": 15}\n')
+
+ssh = FakeSsh(stdout='{"state": "playing", "kind": "jellyfin", "artist": "Кино", "title": "Группа крови", '
+                     '"station": "", "icy_title": "", "pos": 2, "count": 9, "volume": 40}\n')
+out = vc.run_music("music-status", CONF, runner=ssh)
+argv, kwargs = ssh.calls[0]
+check("music-argv", argv[7:] == ["bash", "-s", "--", "music-status", "voice"], repr(argv))
+check("music-timeout-is-short", kwargs.get("timeout") == vc.MUSIC_TIMEOUT_S and vc.MUSIC_TIMEOUT_S <= 20,
+      repr(kwargs.get("timeout")))
+check("music-status-parsed", out["state"] == "playing" and out["artist"] == "Кино" and out["volume"] == 40
+      and out["error"] is None, repr(out))
+
+# A control command prints the player's own line, then the fresh status: the last line wins.
+ssh = FakeSsh(stdout=STATUS)
+out = vc.run_music("music", CONF, runner=ssh, extra=("volume", "+10"))
+check("music-command-argv", ssh.calls[0][0][7:] == ["bash", "-s", "--", "music", "voice", "volume", "+10"],
+      repr(ssh.calls[0][0]))
+check("music-command-returns-fresh-status", out["state"] == "stopped" and out["volume"] == 15 and out["error"] is None,
+      repr(out))
+
+out = vc.run_music("music-status", CONF, runner=FakeSsh(rc=255, stderr="ssh: connect to host x: Connection refused\n"))
+check("music-ssh-failure-is-unreachable", out["error"] == "unreachable" and out["state"] is None, repr(out))
+out = vc.run_music("music-status", CONF, runner=FakeSsh(raises=subprocess.TimeoutExpired("ssh", 15)))
+check("music-timeout-labelled", out["error"] == "timeout" and out["state"] is None, repr(out))
+out = vc.run_music("music", CONF, runner=FakeSsh(rc=1, stdout="error=bad_music\n"), extra=("hold",))
+check("music-refusal-is-labelled", out["error"] == "music_failed" and out["detail"] == "error=bad_music", repr(out))
+out = vc.run_music("music-status", CONF, runner=FakeSsh(rc=0, stdout="bash: line 1: music: command not found\n", stderr=""))
+check("music-garbage-is-bad-reply", out["error"] == "bad_reply" and out["state"] is None, repr(out))
+out = vc.run_music("music-status", {"ssh_host": "host; rm -rf ~", "tmux_session": "voice"}, runner=FakeSsh())
+check("music-bad-settings", out["error"] == "bad_settings" and out["state"] is None, repr(out))
+
+# --- the routes: a request body never reaches argv unchanged -------------------
+from fastapi import FastAPI  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+app = FastAPI()
+app.include_router(vc.router)
+client = TestClient(app)
+
+calls: list = []
+real_run_music = vc.run_music
+
+
+def fake_run_music(action, conf, runner=subprocess.run, extra=()):
+    calls.append((action, extra))
+    return {"state": "playing", "kind": "jellyfin", "volume": 40, "error": None}
+
+
+vc.run_music = fake_run_music  # type: ignore[attr-defined]  # the route looks it up by name
+try:
+    for bad in [{"cmd": "play"}, {"cmd": "hold"}, {"cmd": "release"}, {"cmd": "volume"}, {"cmd": "volume", "arg": "loud"},
+                {"cmd": "volume", "arg": "10; reboot"}, {"cmd": "pause", "arg": "+10"}, {"cmd": None}, {}]:
+        calls.clear()
+        r = client.post("/music", json=bad)
+        check(f"music-route-rejects:{bad!r}", r.status_code == 422 and not calls, r.text)
+    check("music-route-volume", client.post("/music", json={"cmd": "volume", "arg": "+10"}).status_code == 200
+          and calls[-1] == ("music", ("volume", "+10")), repr(calls))
+    check("music-route-volume-int", client.post("/music", json={"cmd": "volume", "arg": 15}).status_code == 200
+          and calls[-1] == ("music", ("volume", "15")), repr(calls))
+    check("music-route-pause", client.post("/music", json={"cmd": "pause"}).status_code == 200
+          and calls[-1] == ("music", ("pause",)), repr(calls))
+    check("music-route-status", client.get("/music").status_code == 200 and calls[-1][0] == "music-status", repr(calls))
+
+    # The command must reach remote.sh as $3: a fake run_music cannot show that, ssh can.
+    ssh = FakeSsh(stdout='{"state": "playing"}\n')
+    vc.run_music = lambda action, conf, extra=(): real_run_music(action, conf, runner=ssh, extra=extra)  # type: ignore[attr-defined]
+    check("music-route-toggle-reaches-argv", client.post("/music", json={"cmd": "toggle"}).status_code == 200
+          and ssh.calls[0][0][7:] == ["bash", "-s", "--", "music", "voice", "toggle"], repr(ssh.calls))
+finally:
+    vc.run_music = real_run_music  # type: ignore[attr-defined]
+
 # --- settings are a trust boundary: they reach argv ------------------------
 for host in ["-oProxyCommand=touch /tmp/pwned", "host; rm -rf ~", "a b", "", "$(id)"]:
     ssh = FakeSsh(stdout="listening=true\n")

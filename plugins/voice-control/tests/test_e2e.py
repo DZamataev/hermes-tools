@@ -3,8 +3,10 @@
 
 Mounts this plugin's router in a throwaway FastAPI app (not the user's gateway), then
 over HTTP: reads the state, flips the microphone, checks it flipped, flips it back,
-and leaves the assistant as it found it. Needs the ssh host from the plugin settings
-to be reachable and the voice Hermes to be idle.
+and leaves the assistant as it found it. Then reads the music status and, only if
+nothing is playing, presses stop — a no-op. It never starts playback.
+
+Needs the ssh host from the plugin settings to be reachable and the voice Hermes to be idle.
 """
 from __future__ import annotations
 
@@ -48,6 +50,17 @@ finally:
     back = client.post(base, json={"listening": original}).json()
     print("restored:", back)
     ok &= back.get("listening") is original
+
+# The music half: read the status; press stop only when that is a no-op.
+music_base = "/api/plugins/voice-control/music"
+music = client.get(music_base).json()
+print("music:", music)
+ok &= music.get("error") is None and music.get("state") in ("playing", "paused", "stopped")
+if music.get("state") == "stopped":
+    noop = client.post(music_base, json={"cmd": "stop"}).json()
+    print("music stop (no-op):", noop)
+    ok &= noop.get("error") is None and noop.get("state") == "stopped"
+ok &= client.post(music_base, json={"cmd": "play"}).status_code == 422
 
 print("✓ e2e passed" if ok else "✗ e2e failed")
 sys.exit(0 if ok else 1)

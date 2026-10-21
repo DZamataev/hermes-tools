@@ -1,6 +1,6 @@
 name: voice-control
 version: 0.1.0
-description: "Turn a headless voice Hermes's microphone on and off over ssh, from the desktop status bar."
+description: "Turn a headless voice Hermes's microphone on and off over ssh, and pause or skip the music player on the same host, from the desktop status bar."
 author: "Denis"
 kind: standalone
 config_schema:
