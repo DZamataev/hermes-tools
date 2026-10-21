@@ -147,7 +147,12 @@ def run_music(action: str, conf: Dict[str, str], runner=subprocess.run,
 
 
 def _with_message(payload: Dict[str, Any]) -> Dict[str, Any]:
-    payload["message"] = ERRORS.get(payload.get("error") or "", payload.get("error") or "")
+    error = payload.get("error") or ""
+    # a failed music command carries the player's own Russian line in `detail`: that is the reason
+    if error == "music_failed" and payload.get("detail"):
+        payload["message"] = payload["detail"]
+    else:
+        payload["message"] = ERRORS.get(error, error)
     return payload
 
 

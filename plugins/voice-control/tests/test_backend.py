@@ -147,6 +147,19 @@ try:
           and calls[-1] == ("music", ("pause",)), repr(calls))
     check("music-route-status", client.get("/music").status_code == 200 and calls[-1][0] == "music-status", repr(calls))
 
+    # A refused command: the player's own Russian line is in `detail` and must reach the popover.
+    def refusing(detail):
+        return lambda action, conf, runner=subprocess.run, extra=(): {"state": None, "error": "music_failed",
+                                                                      "detail": detail}
+
+    vc.run_music = refusing("ничего не играет")  # type: ignore[attr-defined]
+    r = client.post("/music", json={"cmd": "pause"})
+    check("music-failure-shows-player-reason", r.json().get("message") == "ничего не играет", r.text)
+    vc.run_music = refusing("")  # type: ignore[attr-defined]
+    r = client.post("/music", json={"cmd": "pause"})
+    check("music-failure-without-detail-keeps-generic", r.json().get("message") == vc.ERRORS["music_failed"], r.text)
+    vc.run_music = fake_run_music  # type: ignore[attr-defined]
+
     # The command must reach remote.sh as $3: a fake run_music cannot show that, ssh can.
     ssh = FakeSsh(stdout='{"state": "playing"}\n')
     vc.run_music = lambda action, conf, extra=(): real_run_music(action, conf, runner=ssh, extra=extra)  # type: ignore[attr-defined]
