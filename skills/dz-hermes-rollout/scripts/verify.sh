@@ -174,8 +174,9 @@ if $app; then
       # Playwright drives `electron .` against apps/desktop/dist, not the packaged app above.
       (cd "$FORK/apps/desktop" && npm run build) >"$ELOG" 2>&1 || fail "desktop dist build failed — see $ELOG"
       rc=0
+      # Each worker boots its own Electron + gateway; 6 at once right after a build time out at boot.
       (cd "$FORK/apps/desktop" && env -u PYTHONPATH -u PYTHONHOME E2E_HIDE_WINDOWS=1 \
-        HERMES_DESKTOP_PYTHON="$FORK_VENV/bin/python" npx playwright test "${specs[@]}" --reporter=line) \
+        HERMES_DESKTOP_PYTHON="$FORK_VENV/bin/python" npx playwright test "${specs[@]}" --workers=2 --reporter=line) \
         >>"$ELOG" 2>&1 || rc=$?
       grep -E '^ +[0-9]+ (passed|failed|flaky|skipped)' "$ELOG" | sed 's/^ */  /' || true
       [ $rc -eq 0 ] || fail "fork desktop e2e failed — see $ELOG"
